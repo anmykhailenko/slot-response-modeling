@@ -1,0 +1,29 @@
+primary_window_days: 3
+
+secondary_window_days: 7
+
+measurement_start: after_treatment_timestamp
+
+historical_phase1_mode: treated_only_post_treatment_outcomes
+
+gross_metrics:
+  - real_money_betting_amount
+  - gross_ggr
+  - gross_value
+
+net_metrics:
+  - net_value_after_treatment_cost
+  - profit_after_treatment_cost
+  - roi
+
+treatment_cost_logic: actual_cost
+
+timing_requirements:
+  treatment_timestamp_required: true
+  same_timestamp_or_pre_treatment_activity_excluded: true
+  outcome_measurement_must_be_strictly_post_treatment: true
+
+notes:
+  - Both gross and net outcomes are required because gross activity can improve while economics deteriorate.
+  - Current outcomes are interpreted as post-treatment realized outcomes on treated rows, not incremental uplift labels.
+  - The exact label formulas remain an open contract item and must be finalized before training begins.

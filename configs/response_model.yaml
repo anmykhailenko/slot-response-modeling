@@ -1,0 +1,91 @@
+source_table: pai_rec_prod.alg_uplift_phase1_response_dataset_di
+as_of_date: 2026-04-21
+response_window_days: 3
+maturity_buffer_days: 1
+champion_reference_path: model_registry/response_current.json
+
+splits:
+  train_fraction: 0.6
+  validation_fraction: 0.2
+  test_fraction: 0.2
+
+target_column: response_label_positive_3d
+numeric_feature_columns:
+  - recent_bet_cnt_7d
+  - recent_bet_amt_7d
+  - recent_win_amt_7d
+  - recent_ggr_amt_7d
+  - recent_net_loss_amt_7d
+  - recent_bet_days_7d
+  - recency_last_bet_to_t
+  - pre_bet_cnt_30d
+  - pre_bet_amt_30d
+  - pre_win_amt_30d
+  - pre_ggr_amt_30d
+  - pre_net_loss_amt_30d
+  - pre_bet_days_30d
+  - recent_dep_cnt_7d
+  - recent_dep_amt_7d
+  - recent_withdraw_cnt_7d
+  - recent_withdraw_amt_7d
+  - recent_net_cash_in_7d
+categorical_feature_columns:
+  - vip_level
+
+optional_decision_time_treatment_columns:
+  - has_voucher_treatment
+  - has_sms_treatment
+
+excluded_columns:
+  - player_id
+  - assignment_date
+  - treatment_timestamp
+  - treatment_flag
+  - raw_assignment_event_count
+  - feature_snapshot_date
+  - feature_create_time
+  - data_version
+  - outcome_gross_bet_3d_value
+  - outcome_gross_ggr_3d_value
+  - outcome_source_row_count_3d
+  - outcome_distinct_source_keys_3d
+  - first_outcome_event_date
+  - last_outcome_event_date
+  - response_label_positive_3d
+  - pt
+
+threshold_grid:
+  min: 0.05
+  max: 0.95
+  step: 0.05
+
+threshold_selection:
+  policy: max_precision_with_min_recall
+  minimum_recall: 0.60
+  fallback_policy: best_f1
+
+models:
+  logistic_regression:
+    enabled: true
+    solver: liblinear
+    max_iter: 1000
+    class_weight: balanced
+    C: 1.0
+  lightgbm:
+    enabled: true
+    n_estimators: 200
+    learning_rate: 0.05
+    num_leaves: 31
+    min_child_samples: 50
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.0
+    reg_lambda: 0.0
+    class_weight: balanced
+
+reporting:
+  segment_column: vip_level
+  min_segment_rows: 100
+
+artifacts:
+  output_dir: outputs/final/response_modeling

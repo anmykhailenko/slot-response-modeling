@@ -1,0 +1,181 @@
+dataset_name: alg_uplift_strategy_comparison_player_di
+recommended_odps_target: pai_rec_prod.alg_uplift_strategy_comparison_player_di
+
+grain:
+  - player_id
+  - decision_timestamp
+
+fallback_grain:
+  - player_id
+  - decision_date
+
+key_columns:
+  player_id: player_id
+  decision_date: decision_date
+  decision_timestamp: decision_timestamp
+  partition_column: pt
+
+timing_semantics:
+  row_definition: one_player_at_one_decision_moment
+  preferred_decision_anchor: decision_timestamp
+  fallback_decision_anchor: decision_date
+  treatment_must_not_precede_decision: true
+  feature_snapshot_must_be_before_decision: true
+  outcome_windows_start_after_treatment_timestamp: true
+  outcome_window_3d_definition: open_closed_interval_after_treatment_through_3_days
+  outcome_window_7d_definition: open_closed_interval_after_treatment_through_7_days
+
+strategy_semantics:
+  target_comparison:
+    - rule_based
+    - churn_model_based
+  historical_mode: strategy_comparison_policy_evaluation
+  classical_uplift_supported_now: false
+  required_strategy_columns:
+    - strategy_group
+    - selected_flag
+    - actual_treatment_flag
+  strategy_group_definition:
+    rule_based: player was handled by historical rule logic
+    churn_model_based: player was handled by churn-model-based targeting logic
+  selected_flag_definition: player was selected by the strategy at the decision moment
+  actual_treatment_flag_definition: treatment execution actually happened
+  required_columns:
+    - strategy_group
+    - selected_flag
+    - actual_treatment_flag
+  strategy_assignment_source_status: missing_in_workspace_requires_confirmation
+
+treatment_semantics:
+  raw_treatment_type_preserved: true
+  supported_confirmed_sources:
+    - SuperEngineProject.dwd_mms_user_claimed_info_di
+    - superengineproject.ods_msg_sms_send_record
+  normalized_columns:
+    - actual_treatment_flag
+    - treatment_type
+    - treatment_subtype
+    - treatment_timestamp
+    - treatment_cost_actual
+    - treatment_cost_fallback
+    - treatment_cost_currency
+    - treatment_cost_source
+  treatment_type_examples:
+    - voucher
+    - sms
+  treatment_timestamp_definition: actual execution timestamp or best available execution datetime
+  treatment_cost_priority:
+    - treatment_cost_actual
+    - treatment_cost_fallback
+
+outcome_semantics:
+  primary_business_metric: gross_bet_amount_t_plus_3
+  required_outcome_columns:
+    - gross_bet_amount_t_plus_3
+    - gross_bet_amount_t_plus_7
+    - gross_ggr_t_plus_3
+    - gross_ggr_t_plus_7
+    - net_value_t_plus_3
+    - net_value_t_plus_7
+  secondary_windows:
+    - gross_bet_amount_t_plus_7
+    - net_value_t_plus_3
+    - net_value_t_plus_7
+  readiness_flags:
+    - label_ready_3d
+    - label_ready_7d
+  readiness_flag_definition:
+    label_ready_3d: full 3-day window is observable
+    label_ready_7d: full 7-day window is observable
+  confirmed_outcome_source_in_workspace: false
+  confirmed_outcome_source_note: current_workspace_does_not_document_the_required_post_treatment_betting_or_ggr_fact_table
+
+pre_treatment_context:
+  confirmed_feature_source: pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
+  expected_columns:
+    - is_eligible
+    - vip_level
+    - vip_level_num
+    - snapshot_date
+    - data_version
+  optional_columns:
+    - value_segment_at_decision
+
+score_context:
+  likely_score_source: bi_data_export.ads_bp_user_slot_churn_predictions_di
+  likely_columns:
+    - prediction_score
+    - selected_threshold
+    - prediction_ts
+  joinability_status: assumed_not_confirmed
+
+required_target_columns:
+  - player_id
+  - decision_date
+  - decision_timestamp
+  - eligibility_flag
+  - strategy_group
+  - strategy_version
+  - selected_flag
+  - selection_reason_code
+  - actual_treatment_flag
+  - treatment_type
+  - treatment_subtype
+  - treatment_source_event_id
+  - treatment_timestamp
+  - treatment_cost_actual
+  - treatment_cost_fallback
+  - treatment_cost_currency
+  - treatment_cost_source
+  - churn_score_at_decision
+  - selected_threshold_at_decision
+  - vip_level_at_decision
+  - vip_level_num_at_decision
+  - value_segment_at_decision
+  - feature_snapshot_date
+  - gross_ggr_t_plus_3
+  - gross_ggr_t_plus_7
+  - gross_bet_amount_t_plus_3
+  - gross_bet_amount_t_plus_7
+  - net_value_t_plus_3
+  - net_value_t_plus_7
+  - label_ready_3d
+  - label_ready_7d
+  - outcome_window_start_ts
+  - outcome_window_end_3d_ts
+  - outcome_window_end_7d_ts
+  - eligibility_source_table
+  - strategy_source_table
+  - score_source_table
+  - treatment_source_table
+  - outcome_source_table
+  - feature_source_table
+  - build_version
+  - build_timestamp
+  - pt
+
+provenance_requirements:
+  - eligibility_source_table
+  - strategy_source_table
+  - score_source_table
+  - treatment_source_table
+  - outcome_source_table
+  - feature_source_table
+  - build_version
+  - build_timestamp
+
+readiness_flags:
+  decision_log_confirmed: false
+  strategy_assignment_confirmed: false
+  treatment_cost_logic_confirmed: false
+  outcome_fact_confirmed: false
+  score_join_confirmed: false
+  identity_bridge_confirmed: false
+
+open_questions:
+  - authoritative_strategy_assignment_source_table
+  - authoritative_post_treatment_betting_fact_table
+  - authoritative_actual_treatment_cost_source
+  - exact_identity_mapping_between_login_name_and_player_id
+  - whether_decision_timestamp_is_available_or_only_decision_date
+  - whether_value_segment_exists_or_must_be_derived

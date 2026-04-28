@@ -1,0 +1,70 @@
+phases:
+  phase_1:
+    name: treated_only_response_value_modeling
+    objective: predict_post_treatment_response_or_value_within_the_historically_treated_population
+    allowed_modeling_mode:
+      - treated_only_response_modeling
+      - treated_only_value_modeling
+    not_allowed:
+      - historical_treat_vs_no_treat_modeling
+      - pure_causal_uplift_claims
+      - treatment_type_optimization
+    entry_conditions:
+      - step_1_dataset_foundation_completed
+      - step_2_profiling_and_audit_completed
+      - business_objective_confirmed
+      - treated_only_historical_scope_confirmed
+    exit_conditions:
+      - primary_label_formula_finalized
+      - net_value_formula_finalized
+      - pilot_success_threshold_defined
+
+  phase_2:
+    name: treatment_strategy_comparison
+    objective: compare_treatment_strategies_or_variants_if_raw_treatment_types_are_reliably_usable
+    allowed_modeling_mode:
+      - treatment_strategy_comparison
+      - exploratory_variant_modeling
+    prerequisites:
+      - phase_1_operationally_stable
+      - reliable_channel_level_logging
+      - adequate_sample_size_for_each_treatment_type
+      - acceptable_group_comparability_across_treatment_types
+    blocked_if:
+      - overlapping_treatments_remain_unresolved
+      - treatment_channel_logs_remain_incomplete
+
+  phase_3:
+    name: true_uplift_modeling
+    objective: estimate_incremental_treatment_effect_with_stronger_causal_interpretation
+    allowed_modeling_mode:
+      - binary_uplift
+      - multi_treatment_uplift
+    prerequisites:
+      - explicit_no_treatment_control_or_holdout_exists
+      - final_untreated_eligibility_definition_exists
+      - reliable_control_group_exists
+      - cleaner_historical_logs_exist
+      - stable_assignment_policy_or_experimental_design_exists
+      - timestamp_quality_supports_precise_post_treatment_measurement
+      - sufficient_overlap_between_treated_and_untreated_eligible_players
+    blocked_if:
+      - no_treatment_control_group_is_absent
+      - historical_assignment_remains_rule_based_without_clean_controls
+      - campaign_rules_continue_to_shift_without_tracking
+      - outcome_measurement_cannot_be_trusted
+
+open_questions:
+  - exact_formula_for_primary_label
+  - exact_economic_formula_for_net_value
+  - final_definition_of_eligible_untreated_players
+  - whether_3d_or_7d_is_the_official_primary_business_kpi
+  - success_threshold_for_the_phase_1_pilot
+  - fallback_cost_logic_when_actual_cost_is_missing
+  - minimum_logging_completeness_required_for_promotion_to_phase_2
+
+notes:
+  - Phase 1 is the approved near-term path.
+  - Historical Phase 1 is treated-only by design because reliable untreated examples are not available.
+  - Phase 2 is conditional on treatment variants being distinguishable enough for comparison.
+  - Phase 3 is explicitly conditional and should not be assumed from current historical data quality.

@@ -1,0 +1,72 @@
+dataset_name: alg_uplift_player_assignment_training_di
+
+grain:
+  - player_id
+  - assignment_date
+
+required_columns:
+  - player_id
+  - assignment_date
+  - treatment_flag
+  - treatment_type
+  - treatment_group
+  - feature_snapshot_date
+  - source_treatment_types
+  - treatment_event_count
+  - treatment_source_count
+
+nullable_key_columns:
+  - player_id
+  - assignment_date
+  - treatment_flag
+  - feature_snapshot_date
+
+required_outcome_columns:
+  - outcome_gross_bet_3d_value
+  - outcome_gross_bet_3d_flag
+  - outcome_gross_ggr_3d_value
+  - response_label_positive_3d
+
+max_null_rate:
+  treatment_type: 0.0
+  treatment_group: 0.2
+  feature_snapshot_date: 0.02
+  outcome_gross_bet_3d_flag: 0.0
+  response_label_positive_3d: 0.0
+
+allowed_treatment_flag_values:
+  - 0
+  - 1
+
+minimum_treatment_share: 0.01
+maximum_treatment_share: 1.0
+
+leakage_rules:
+  feature_snapshot_must_be_before_assignment: true
+  minimum_feature_lag_days: 1
+  outcome_must_start_after_assignment: true
+  forbidden_column_name_patterns:
+    - "^label_"
+    - "^future_"
+    - "^post_"
+    - "_t\\+"
+    - "churn_d[0-9]+$"
+
+audit_columns:
+  - source_treatment_types
+  - source_treatment_groups
+  - source_treatment_tables
+  - treatment_event_count
+  - treatment_source_count
+  - raw_assignment_event_count
+  - feature_snapshot_date
+  - feature_source_table
+  - outcome_source_table
+  - first_outcome_event_date
+  - last_outcome_event_date
+
+notes:
+  - This contract is for the grounded observational dataset foundation, not for a final uplift-ready training table.
+  - The builder uses `SuperEngineProject.ads_bet_site_order_sum_di` as the first grounded post-treatment response fact for the observational Phase-1 dataset.
+  - Response labeling is intentionally observational and binary for the first build: positive 3-day post-treatment betting response vs no observed positive response.
+  - Binary and multi-group treatment encodings are preserved for audit, but this dataset still does not support causal uplift claims.

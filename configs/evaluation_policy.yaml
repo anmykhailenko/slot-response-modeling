@@ -1,0 +1,43 @@
+success_metrics:
+  - incremental_real_money_betting_amount_vs_rule_baseline
+  - gross_ggr_change_vs_rule_baseline
+  - net_value_after_treatment_cost
+  - roi
+  - treat_rate
+
+baseline_comparison_targets:
+  - current_rule_based_campaign_policy
+  - no_model_business_as_usual
+  - simple_response_ranking_baseline
+
+segment_level_evaluation:
+  enabled: true
+  required_segments:
+    - treatment_channel_mix
+    - vip_level
+    - player_value_band
+    - assignment_date_period
+    - campaign_rule_regime
+
+overall_evaluation:
+  include_short_window: true
+  include_medium_window: true
+  primary_windows:
+    - 3
+    - 7
+  aggregate_views:
+    - overall
+    - by_day
+    - by_week
+    - by_treatment_source_mix
+
+stop_conditions:
+  - net_value_after_treatment_cost_is_negative_vs_baseline
+  - roi_is_below_minimum_business_threshold
+  - treat_rate_exceeds_operational_capacity
+  - data_quality_or_logging_completeness_falls_below_required_threshold
+  - measured_performance_is_worse_than_current_rule_policy
+
+notes:
+  - Phase 1 evaluation should focus on strategy comparison, not on claiming unbiased uplift.
+  - Segment-level reporting is required because rule drift and campaign changes may create unstable average results.

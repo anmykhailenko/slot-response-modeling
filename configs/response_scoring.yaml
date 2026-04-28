@@ -1,0 +1,48 @@
+as_of_date: 2026-04-21
+
+feature_source_table: pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
+feature_partition_column: pt
+eligibility_filter:
+  is_eligible: 1
+
+champion_reference_path: model_registry/response_current.json
+
+training_feature_config: configs/response_model.yaml
+
+business_columns:
+  - player_id
+  - snapshot_date
+  - pt
+  - vip_level
+  - feature_create_time
+  - data_version
+
+publish:
+  enabled: true
+  dry_run: false
+  target_table: pai_rec_prod.alg_uplift_phase1_response_scores_di
+  partition_column: pt
+  write_mode: overwrite
+
+prioritization:
+  bucket_count: 5
+  bucket_labels:
+    - very_low
+    - low
+    - medium
+    - high
+    - very_high
+
+action_rules:
+  high_priority_buckets:
+    - very_high
+    - high
+  low_priority_buckets:
+    - very_low
+    - low
+  high_value_vip_levels:
+    - V4
+    - V5
+    - V6
+    - V7
+    - V8

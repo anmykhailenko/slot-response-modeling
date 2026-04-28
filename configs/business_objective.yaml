@@ -1,0 +1,19 @@
+primary_metric: real_money_betting_amount
+
+secondary_metrics:
+  - gross_ggr
+  - gross_value
+  - roi
+  - profit_after_treatment_cost
+  - net_value_after_treatment_cost
+
+optimization_goal: maximize_post_treatment_real_money_betting_amount_subject_to_economic_guardrails
+
+run_frequency: daily
+
+decision_output_type: treated_only_value_or_response_score_for_phase1
+
+notes:
+  - Historical Phase 1 is treated-only because reliable no-treatment historical examples are not available.
+  - Economic metrics must be tracked even when the primary optimization metric is gross betting amount.
+  - A future yes/no treat decision remains possible only after explicit control or holdout data exists.

@@ -1,0 +1,40 @@
+binary_treatment_phase1: true
+
+raw_treatment_types_preserved: true
+
+treatment_types:
+  - free_spins
+  - coupon
+  - message_contact
+
+message_counts_as_treatment: true
+
+multiple_treatments_handling:
+  phase1_modeling_view: treated_only_population_with_preserved_raw_treatment_mix
+  preserve_raw_channels: true
+  preserve_raw_treatment_type: true
+  preserve_multi_treatment_history: true
+  overlapping_treatment_policy: keep_for_audit_and_future_phase
+
+historical_control_status:
+  untreated_examples_available: false
+  final_untreated_eligibility_definition_exists: false
+  implication: no_historical_treat_vs_no_treat_learning
+
+phase1_historical_mode:
+  default: treated_only_value_or_response_modeling
+  optional_secondary_mode: treatment_strategy_comparison_if_variants_are_usable
+
+future_multi_treatment_phase:
+  enabled_in_phase1: false
+  target_mode: treatment_type_optimization
+  prerequisites:
+    - stable_logging_by_treatment_channel
+    - sufficient_sample_size_per_treatment_type
+    - improved_overlap_between_treatment_groups
+    - stronger_policy_stability_or_experimental_design
+
+notes:
+  - All currently observed historical rows are treated rows for practical modeling purposes.
+  - Phase 1 does not learn a binary treat vs no-treatment decision from historical data.
+  - Treatment type remains part of the stored dataset for future policy and modeling expansion.

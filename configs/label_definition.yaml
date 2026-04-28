@@ -1,0 +1,76 @@
+candidate_labels:
+  gross_bet_amount_t_plus_3:
+    description: total real-money betting amount observed strictly after treatment timestamp through day 3
+    placeholder_formula: sum(real_money_bet_amount where event_ts > treatment_ts and event_ts <= treatment_ts + 3 days)
+    dependencies:
+      - treatment_timestamp
+      - real_money_betting_events
+      - player_id
+    trainable_now: true
+    status: candidate_for_phase_1
+
+  gross_bet_amount_t_plus_7:
+    description: total real-money betting amount observed strictly after treatment timestamp through day 7
+    placeholder_formula: sum(real_money_bet_amount where event_ts > treatment_ts and event_ts <= treatment_ts + 7 days)
+    dependencies:
+      - treatment_timestamp
+      - real_money_betting_events
+      - player_id
+    trainable_now: true
+    status: candidate_for_phase_1
+
+  net_value_t_plus_3:
+    description: realized post-treatment net value through day 3 after subtracting actual treatment cost
+    placeholder_formula: gross_value_t_plus_3 - actual_treatment_cost_allocated_to_row
+    dependencies:
+      - treatment_timestamp
+      - gross_value_components
+      - actual_treatment_cost
+      - player_id
+    trainable_now: conditional
+    status: requires_final_net_value_formula
+
+  net_value_t_plus_7:
+    description: realized post-treatment net value through day 7 after subtracting actual treatment cost
+    placeholder_formula: gross_value_t_plus_7 - actual_treatment_cost_allocated_to_row
+    dependencies:
+      - treatment_timestamp
+      - gross_value_components
+      - actual_treatment_cost
+      - player_id
+    trainable_now: conditional
+    status: requires_final_net_value_formula
+
+  binary_positive_response_t_plus_3:
+    description: binary indicator that the player shows a positive post-treatment response by day 3
+    placeholder_formula: 1 if gross_bet_amount_t_plus_3 > threshold_or_activity_rule else 0
+    dependencies:
+      - treatment_timestamp
+      - real_money_betting_events
+      - response_threshold_definition
+      - player_id
+    trainable_now: conditional
+    status: requires_final_positive_response_rule
+
+  binary_positive_response_t_plus_7:
+    description: binary indicator that the player shows a positive post-treatment response by day 7
+    placeholder_formula: 1 if gross_bet_amount_t_plus_7 > threshold_or_activity_rule else 0
+    dependencies:
+      - treatment_timestamp
+      - real_money_betting_events
+      - response_threshold_definition
+      - player_id
+    trainable_now: conditional
+    status: requires_final_positive_response_rule
+
+open_formula_decisions:
+  - exact_formula_for_gross_value
+  - exact_formula_for_net_value
+  - threshold_for_binary_positive_response
+  - official_primary_window_for_training
+  - cost_allocation_rule_when_multiple_treatments_exist
+  - handling_rule_when_actual_cost_is_missing
+
+notes:
+  - These labels are Phase 1 treated-only labels, not uplift labels.
+  - Future uplift labels require an explicit untreated control or holdout design and should not be inferred from current historical data.

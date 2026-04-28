@@ -1,0 +1,49 @@
+unit_of_observation: one_treated_player_assignment_event_or_collapsed_assignment_row
+
+player_grain:
+  player_id_column: player_id
+  row_grain:
+    - player_id
+    - assignment_date
+
+treatment_timestamp_semantics:
+  current_definition: observed_treatment_timestamp_or_assignment_timestamp_for_a_treated_row
+  required_rule: treatment_timestamp_must_precede_all_measured_outcomes
+  current_population_status: historically_treated_only
+
+outcome_window_semantics:
+  window_start: strictly_after_treatment_timestamp
+  primary_window_days: 3
+  secondary_window_days: 7
+  current_interpretation: realized_post_treatment_outcome_on_treated_rows
+
+feature_cutoff_semantics:
+  rule: all_features_must_be_computed_from_information_available_before_treatment_timestamp
+  minimum_lag_requirement_days: 1
+  leakage_policy: any_same_day_or_post_treatment_feature_is_invalid_for_training
+
+treated_only_historical_dataset_semantics:
+  current_mode: treated_only_historical_modeling_dataset
+  allowed_use_cases:
+    - treated_only_response_prediction
+    - treated_only_value_prediction
+    - treatment_strategy_comparison_if_variants_are_distinguishable
+  not_allowed_use_cases:
+    - historical_binary_treat_vs_no_treat_learning
+    - classical_uplift_estimation
+    - incremental_effect_claims_without_control
+
+future_control_group_ready_semantics:
+  required_changes:
+    - explicit_eligible_untreated_definition
+    - explicit_no_treatment_control_or_holdout_group
+    - clean_logging_for_treated_and_untreated_players
+    - stable_assignment_policy_or_experimental_design
+  future_allowed_use_cases:
+    - binary_uplift_modeling
+    - multi_treatment_uplift_modeling
+    - economics_aware_policy_optimization_with_control
+
+notes:
+  - One current row represents an observed treated opportunity, not a treated-vs-untreated experimental unit.
+  - Future uplift readiness depends on a control-group-capable redesign of the dataset semantics.
