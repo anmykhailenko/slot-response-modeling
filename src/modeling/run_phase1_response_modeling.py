@@ -1355,6 +1355,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
+    print(f"[PHASE1] using_config_path={config_path}", flush=True)
     config = load_yaml(config_path)
     reader_config = {
         "use_arrow": bool(config.get("odps_reader", {}).get("use_arrow", False)),

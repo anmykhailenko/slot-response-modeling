@@ -11,10 +11,10 @@ import yaml
 from sklearn.metrics import average_precision_score, f1_score, precision_score, recall_score, roc_auc_score
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MODEL_DIR = REPO_ROOT / "response_modeling" / "outputs" / "final" / "response_modeling" / "models" / "lightgbm"
-DEFAULT_REPORTS_DIR = REPO_ROOT / "response_modeling" / "reports"
-DEFAULT_CONFIG_PATH = REPO_ROOT / "response_modeling" / "configs" / "response_model.yaml"
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_MODEL_DIR = ROOT_DIR / "outputs" / "final" / "response_modeling" / "models" / "lightgbm"
+DEFAULT_REPORTS_DIR = ROOT_DIR / "reports"
+DEFAULT_CONFIG_PATH = ROOT_DIR / "configs" / "response_model.yaml"
 BUSINESS_EXCLUDED_SEGMENTS = {"UNKNOWN", "__NULL__"}
 THRESHOLD_GRID = np.round(np.arange(0.05, 0.95 + 1e-9, 0.05), 2)
 MIN_THRESHOLD_GRID_ROWS = 1000
@@ -777,6 +777,7 @@ def generate_reporting_artifacts(
     model_dir = model_dir.resolve()
     reports_dir = reports_dir.resolve()
     config_path = config_path.resolve()
+    print(f"[PHASE1] using_config_path={config_path}")
     ensure_dir(reports_dir)
 
     if scored_by_split is None:
