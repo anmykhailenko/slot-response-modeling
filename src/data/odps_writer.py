@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import pandas as pd
+import numpy as np
 
 if __package__ in {None, ""}:
     import sys
@@ -77,6 +78,23 @@ def build_partition_spec(partition_column: str, partition_value: str) -> str:
     return f"{partition_column.strip()}={partition_value.strip()}"
 
 
+def _normalize_odps_scalar(value: object) -> object:
+    if value is None:
+        return None
+    if pd.isna(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _iter_odps_rows(frame: pd.DataFrame):
+    for row in frame.itertuples(index=False, name=None):
+        yield tuple(_normalize_odps_scalar(value) for value in row)
+
+
 def write_frame_to_odps(
     df: pd.DataFrame,
     *,
@@ -109,7 +127,7 @@ def write_frame_to_odps(
     try:
         client.write_table(
             resolved_table,
-            payload,
+            _iter_odps_rows(payload),
             project=resolved_project,
             partition=build_partition_spec(partition_column, partition_value),
             create_partition=True,
