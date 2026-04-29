@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -78,11 +79,48 @@ def build_partition_spec(partition_column: str, partition_value: str) -> str:
     return f"{partition_column.strip()}={partition_value.strip()}"
 
 
-def _normalize_odps_scalar(value: object) -> object:
+def _parse_datetime_like(value: object) -> Optional[datetime]:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
+def _parse_date_like(value: object) -> Optional[date]:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    return pd.to_datetime(text, errors="raise").date()
+
+
+def _normalize_odps_scalar(value: object, odps_type_name: Optional[str] = None) -> object:
     if value is None:
         return None
     if pd.isna(value):
         return None
+    normalized_type = (odps_type_name or "").strip().lower()
+    if normalized_type == "timestamp":
+        return _parse_datetime_like(value)
+    if normalized_type == "datetime":
+        return _parse_datetime_like(value)
+    if normalized_type == "date":
+        return _parse_date_like(value)
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
     if isinstance(value, np.generic):
@@ -90,9 +128,12 @@ def _normalize_odps_scalar(value: object) -> object:
     return value
 
 
-def _iter_odps_rows(frame: pd.DataFrame):
+def _iter_odps_rows(frame: pd.DataFrame, odps_type_names: list[str]):
     for row in frame.itertuples(index=False, name=None):
-        yield tuple(_normalize_odps_scalar(value) for value in row)
+        yield tuple(
+            _normalize_odps_scalar(value, odps_type_name=odps_type_names[idx] if idx < len(odps_type_names) else None)
+            for idx, value in enumerate(row)
+        )
 
 
 def write_frame_to_odps(
@@ -123,11 +164,15 @@ def write_frame_to_odps(
             "Target ODPS table does not exist. "
             f"Project='{resolved_project}', Table='{resolved_table}', {partition_column}='{partition_value}'"
         )
-    payload = df.drop(columns=[partition_column], errors="ignore")
+    target_table = client.get_table(resolved_table, project=resolved_project)
+    payload_columns = [column.name for column in target_table.table_schema.simple_columns]
+    payload = df.drop(columns=[partition_column], errors="ignore").copy()
+    payload = payload.reindex(columns=payload_columns)
+    odps_type_names = [str(column.type).strip().lower() for column in target_table.table_schema.simple_columns]
     try:
         client.write_table(
             resolved_table,
-            _iter_odps_rows(payload),
+            _iter_odps_rows(payload, odps_type_names),
             project=resolved_project,
             partition=build_partition_spec(partition_column, partition_value),
             create_partition=True,
