@@ -102,11 +102,11 @@ pre_treatment_context:
     - value_segment_at_decision
 
 score_context:
-  likely_score_source: bi_data_export.ads_bp_user_slot_churn_predictions_di
+  likely_score_source: pai_rec_prod.alg_uplift_phase1_response_scores_di
   likely_columns:
-    - prediction_score
+    - predicted_response_score
     - selected_threshold
-    - prediction_ts
+    - scoring_ts
   joinability_status: assumed_not_confirmed
 
 required_target_columns:

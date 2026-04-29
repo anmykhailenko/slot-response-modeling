@@ -102,6 +102,15 @@ def normalize_odps_table_name(table_name: str, default_project: Optional[str] = 
     return project, normalized
 
 
+def _parse_partition_spec_value(spec: object) -> Optional[str]:
+    text = str(spec)
+    start = text.find("'")
+    end = text.rfind("'")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return text[start + 1 : end]
+
+
 def _sql_literal(value: object) -> str:
     if value is None:
         return "null"
@@ -214,6 +223,43 @@ def fetch_sql_as_frame(
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
+
+
+def list_odps_partition_values(
+    table_name: str,
+    *,
+    partition_column: str = "pt",
+    odps_client: Optional[Any] = None,
+) -> List[str]:
+    project, table = normalize_odps_table_name(table_name)
+    client = odps_client or create_odps_client_from_env()
+    odps_table = client.get_table(table, project=project)
+
+    metadata_values: List[str] = []
+    for partition in odps_table.partitions:
+        parsed = _parse_partition_spec_value(partition.partition_spec)
+        if parsed:
+            metadata_values.append(parsed)
+    if metadata_values:
+        return sorted(dict.fromkeys(metadata_values))
+
+    sql = (
+        f"select cast({partition_column} as string) as {partition_column} "
+        f"from {project}.{table} "
+        f"where {partition_column} is not null "
+        f"group by {partition_column} "
+        f"order by {partition_column}"
+    )
+    frame = fetch_sql_as_frame(
+        sql,
+        odps_client=client,
+        batch_size=10000,
+        use_arrow=False,
+    )
+    if frame.empty or partition_column not in frame.columns:
+        return []
+    values = [str(value) for value in frame[partition_column].tolist() if value is not None and str(value).strip()]
+    return sorted(dict.fromkeys(values))
 
 
 def read_odps_table(

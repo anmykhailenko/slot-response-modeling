@@ -21,7 +21,7 @@ WORKSPACE_ROOT = PROJECT_ROOT.parent
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
-    from data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame  # noqa: E402
+    from data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, list_odps_partition_values  # noqa: E402
     from data.odps_writer import write_frame_to_odps  # noqa: E402
     from modeling.inference_feature_contract import (  # noqa: E402
         build_named_transformed_frame,
@@ -32,7 +32,7 @@ if __package__ in {None, ""}:
     )
     from modeling.production_model_registry import DEFAULT_CHAMPION_REFERENCE_PATH, resolve_champion_reference  # noqa: E402
 else:  # pragma: no cover
-    from ..data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame
+    from ..data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, list_odps_partition_values
     from ..data.odps_writer import write_frame_to_odps
     from .inference_feature_contract import (
         build_named_transformed_frame,
@@ -123,10 +123,7 @@ def parse_partition_value(spec: Any) -> str:
 
 
 def list_partitions(table_name: str) -> List[str]:
-    project, table = table_name.split(".", 1)
-    client = create_odps_client_from_env()
-    odps_table = client.get_table(table, project=project)
-    return sorted(parse_partition_value(part.partition_spec) for part in odps_table.partitions)
+    return list_odps_partition_values(table_name, partition_column="pt")
 
 
 def fetch_frame(sql: str, batch_size: int = 250000) -> pd.DataFrame:

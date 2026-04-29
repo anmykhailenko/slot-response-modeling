@@ -24,7 +24,7 @@ WORKSPACE_ROOT = PROJECT_ROOT.parent
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
-    from data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame  # noqa: E402
+    from data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, list_odps_partition_values  # noqa: E402
     from modeling.inference_feature_contract import (  # noqa: E402
         build_named_transformed_frame,
         resolve_expected_raw_feature_order,
@@ -40,7 +40,7 @@ if __package__ in {None, ""}:
     from modeling.train_logreg import feature_importance_frame as logreg_feature_importance_frame  # noqa: E402
     from modeling.generate_response_model_reporting import generate_reporting_artifacts  # noqa: E402
 else:  # pragma: no cover
-    from ..data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame
+    from ..data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, list_odps_partition_values
     from .inference_feature_contract import (
         build_named_transformed_frame,
         resolve_expected_raw_feature_order,
@@ -188,15 +188,15 @@ def format_pt_as_date(pt: str) -> str:
 
 
 def list_partitions(table_name: str) -> List[str]:
-    project, table = table_name.split(".", 1)
-    client = create_odps_client_from_env()
-    odps_table = client.get_table(table, project=project)
-    return sorted(partition_value(part.partition_spec) for part in odps_table.partitions)
+    return list_odps_partition_values(table_name, partition_column="pt")
 
 
 def resolve_runtime_window(config: Dict[str, Any], partitions: List[str]) -> RuntimeWindow:
     if not partitions:
-        raise ValueError("The response dataset has no partitions.")
+        raise ValueError(
+            "No `pt` partition values were discovered in the response dataset. "
+            "The table may be empty, or ODPS metadata may not expose partitions for this table handle."
+        )
     as_of_date = date.fromisoformat(str(config["as_of_date"]))
     response_window_days = int(config["response_window_days"])
     maturity_buffer_days = int(config.get("maturity_buffer_days", 0))

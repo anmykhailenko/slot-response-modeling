@@ -12,10 +12,10 @@ if __package__ in {None, "", "monitoring"}:
 
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
-    from data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, normalize_odps_table_name
+    from data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, list_odps_partition_values, normalize_odps_table_name
     from data.odps_writer import write_frame_to_odps
 else:  # pragma: no cover
-    from ..data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, normalize_odps_table_name
+    from ..data.odps_reader import create_odps_client_from_env, fetch_sql_as_frame, list_odps_partition_values, normalize_odps_table_name
     from ..data.odps_writer import write_frame_to_odps
 
 
@@ -42,18 +42,7 @@ def fetch_scalar(sql: str, column_name: str) -> Any:
 
 
 def list_partition_values(table_name: str) -> List[str]:
-    project, table = normalize_odps_table_name(table_name)
-    client = create_odps_client_from_env()
-    odps_table = client.get_table(table, project=project)
-    values: List[str] = []
-    for partition in odps_table.partitions:
-        spec = str(partition.partition_spec)
-        start = spec.find("'")
-        end = spec.rfind("'")
-        if start == -1 or end == -1 or end <= start:
-            continue
-        values.append(spec[start + 1 : end])
-    return sorted(values)
+    return list_odps_partition_values(table_name, partition_column="pt")
 
 
 def fetch_table_column_names(table_name: str) -> List[str]:

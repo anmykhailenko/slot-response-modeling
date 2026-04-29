@@ -91,7 +91,7 @@ def load_response_monitoring_config(path: Path) -> ResponseMonitoringConfig:
     return ResponseMonitoringConfig(
         enabled=bool(monitoring.get("enabled", True)),
         source=SourceConfig(
-            scored_table=str(source.get("scored_table", "pai_rec_prod.alg_uplift_phase1_response_predictions_di")),
+            scored_table=str(source.get("scored_table", "pai_rec_prod.alg_uplift_phase1_response_scores_di")),
             scored_partition_column=str(source.get("scored_partition_column", "pt")),
             feature_table=None if source.get("feature_table") in {None, ""} else str(source.get("feature_table")),
             feature_partition_column=str(source.get("feature_partition_column", "pt")),

@@ -14,3 +14,4 @@ Runtime roots:
 Primary ODPS source:
 
 - modeling dataset: `pai_rec_prod.alg_uplift_phase1_response_dataset_di`
+- scoring output: `pai_rec_prod.alg_uplift_phase1_response_scores_di`
