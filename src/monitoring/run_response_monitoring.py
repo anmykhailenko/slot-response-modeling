@@ -45,13 +45,10 @@ if __package__ in {None, ""}:
         write_monitoring_frame_to_odps,
     )
     from monitoring.performance_response_monitor import (
-        build_bucket_performance_rows,
-        build_calibration_rows,
         build_global_performance_row,
         build_not_evaluable_global_row,
         build_performance_alerts,
         build_performance_markdown_report,
-        build_segment_performance_rows,
         labels_are_mature_for_pt,
         validate_observational_frame,
     )
@@ -86,13 +83,10 @@ else:  # pragma: no cover
         write_monitoring_frame_to_odps,
     )
     from .performance_response_monitor import (
-        build_bucket_performance_rows,
-        build_calibration_rows,
         build_global_performance_row,
         build_not_evaluable_global_row,
         build_performance_alerts,
         build_performance_markdown_report,
-        build_segment_performance_rows,
         labels_are_mature_for_pt,
         validate_observational_frame,
     )
@@ -400,23 +394,17 @@ def run_performance_monitoring(
     )
     if not bool(maturity_summary["labels_mature"]):
         global_row = build_not_evaluable_global_row(pt=current_pt, status_reason="labels_not_mature")
-        global_row["run_label"] = run_label
+        global_row["maturity_horizon_days"] = int(config.performance.response_window_days + config.performance.label_maturity_days)
         markdown_lines = build_performance_markdown_report(
             pt=current_pt,
             maturity_summary=maturity_summary,
             global_row=global_row,
-            bucket_rows=[],
-            segment_rows=[],
-            calibration_rows=[],
             alerts=[],
         )
         return {
             "run_label": run_label,
             "mode": "performance",
             "summary_rows": [global_row],
-            "bucket_rows": [],
-            "segment_rows": [],
-            "calibration_rows": [],
             "alerts": [],
             "markdown_lines": markdown_lines,
             "maturity_summary": maturity_summary,
@@ -439,50 +427,21 @@ def run_performance_monitoring(
         pt=current_pt,
         response_window_days=config.performance.response_window_days,
     )
-    global_row["run_label"] = run_label
-    bucket_rows = build_bucket_performance_rows(
-        observational_frame,
-        pt=current_pt,
-        response_window_days=config.performance.response_window_days,
-        min_rows=config.performance.min_bucket_rows,
-    )
-    for row in bucket_rows:
-        row["run_label"] = run_label
-    segment_rows = build_segment_performance_rows(
-        observational_frame,
-        pt=current_pt,
-        response_window_days=config.performance.response_window_days,
-        segment_columns=config.segments.score_segment_columns,
-        min_rows=config.performance.min_segment_rows,
-    )
-    for row in segment_rows:
-        row["run_label"] = run_label
-    calibration_rows = build_calibration_rows(
-        observational_frame,
-        pt=current_pt,
-        response_window_days=config.performance.response_window_days,
-    )
+    global_row["maturity_horizon_days"] = int(config.performance.response_window_days + config.performance.label_maturity_days)
     alerts = build_performance_alerts(
         config=config,
         global_row=global_row,
-        calibration_rows=calibration_rows,
     )
     markdown_lines = build_performance_markdown_report(
         pt=current_pt,
         maturity_summary=maturity_summary,
         global_row=global_row,
-        bucket_rows=bucket_rows,
-        segment_rows=segment_rows,
-        calibration_rows=calibration_rows,
         alerts=alerts,
     )
     return {
         "run_label": run_label,
         "mode": "performance",
         "summary_rows": [global_row],
-        "bucket_rows": bucket_rows,
-        "segment_rows": segment_rows,
-        "calibration_rows": calibration_rows,
         "alerts": alerts,
         "markdown_lines": markdown_lines,
         "maturity_summary": maturity_summary,
@@ -544,11 +503,7 @@ def maybe_write_monitoring_results(
         write_mode=write_mode,
     )
 
-    performance_rows = (
-        list(performance_result["summary_rows"])
-        + list(performance_result.get("bucket_rows", []))
-        + list(performance_result.get("segment_rows", []))
-    )
+    performance_rows = list(performance_result["summary_rows"])
     performance_frame, performance_mismatch = _align_frame_to_table_schema(
         pd.DataFrame(performance_rows),
         ensure_table_reference(tables["performance"]),

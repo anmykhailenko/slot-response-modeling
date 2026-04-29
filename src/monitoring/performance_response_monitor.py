@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, brier_score_loss, log_loss, roc_auc_score
+from sklearn.metrics import f1_score, precision_score, recall_score
 
 from .config import ResponseMonitoringConfig
 
@@ -47,10 +47,12 @@ def validate_observational_frame(frame: pd.DataFrame, *, response_window_days: i
         "player_id",
         "pt",
         "predicted_response_score",
-        "response_priority_bucket",
         "selected_threshold",
+        "model_name",
+        "model_version",
         f"observed_response_label_positive_{response_window_days}d",
         f"observed_gross_bet_value_{response_window_days}d",
+        f"observed_gross_ggr_value_{response_window_days}d",
     }
     missing = [column for column in sorted(required) if column not in frame.columns]
     if missing:
@@ -62,52 +64,93 @@ def validate_observational_frame(frame: pd.DataFrame, *, response_window_days: i
         raise ValueError(f"Delayed response monitoring input contains duplicate player_id,pt rows: {duplicate_count}")
 
 
-def _metrics(y_true: np.ndarray, scores: np.ndarray) -> Dict[str, float]:
-    threshold = float(np.quantile(scores, 0.8)) if len(scores) else 0.5
-    predicted = (scores >= threshold).astype(int)
-    summary = {
-        "row_count": int(len(y_true)),
-        "positive_count": int(y_true.sum()),
-        "observed_positive_rate": float(y_true.mean()) if len(y_true) else 0.0,
-        "avg_predicted_score": float(scores.mean()) if len(scores) else 0.0,
-        "predicted_positive_rate": float(predicted.mean()) if len(predicted) else 0.0,
-        "calibration_gap": float(abs(scores.mean() - y_true.mean())) if len(scores) else 0.0,
-        "score_min": float(scores.min()) if len(scores) else 0.0,
-        "score_max": float(scores.max()) if len(scores) else 0.0,
+def _single_value_or_none(series: pd.Series) -> Any:
+    values = series.dropna().astype(str).unique().tolist()
+    if not values:
+        return None
+    if len(values) > 1:
+        return ",".join(sorted(values))
+    return values[0]
+
+
+def _single_float_or_none(series: pd.Series) -> float | None:
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric.empty:
+        return None
+    return float(numeric.iloc[0])
+
+
+def _confusion_counts(y_true: np.ndarray, predicted: np.ndarray) -> Dict[str, int]:
+    return {
+        "true_positive_count": int(((y_true == 1) & (predicted == 1)).sum()),
+        "false_positive_count": int(((y_true == 0) & (predicted == 1)).sum()),
+        "false_negative_count": int(((y_true == 1) & (predicted == 0)).sum()),
+        "true_negative_count": int(((y_true == 0) & (predicted == 0)).sum()),
     }
-    if len(np.unique(y_true)) > 1:
-        summary["pr_auc"] = float(average_precision_score(y_true, scores))
-        summary["roc_auc"] = float(roc_auc_score(y_true, scores))
-        summary["log_loss"] = float(log_loss(y_true, scores, labels=[0, 1]))
-        summary["brier_score"] = float(brier_score_loss(y_true, scores))
-    else:
-        summary["pr_auc"] = 0.0
-        summary["roc_auc"] = 0.0
-        summary["log_loss"] = 0.0
-        summary["brier_score"] = float(brier_score_loss(y_true, scores)) if len(scores) else 0.0
-    return summary
 
 
 def build_global_performance_row(frame: pd.DataFrame, *, pt: str, response_window_days: int) -> Dict[str, Any]:
     label_column = f"observed_response_label_positive_{response_window_days}d"
-    value_column = f"observed_gross_bet_value_{response_window_days}d"
+    bet_value_column = f"observed_gross_bet_value_{response_window_days}d"
+    ggr_value_column = f"observed_gross_ggr_value_{response_window_days}d"
+
     y_true = pd.to_numeric(frame[label_column], errors="raise").astype(int).to_numpy()
     scores = pd.to_numeric(frame["predicted_response_score"], errors="raise").astype(float).to_numpy()
-    summary = _metrics(y_true, scores)
-    summary.update(
-        {
-            "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
-            "metric_scope": "global",
-            "segment_column": None,
-            "segment_value": None,
-            "bucket_name": None,
-            "avg_observed_gross_bet_value": float(pd.to_numeric(frame[value_column], errors="raise").mean()),
-            "status": "evaluated",
-            "status_reason": None,
-            "pt": str(pt),
-        }
-    )
-    return summary
+    threshold = _single_float_or_none(frame["selected_threshold"])
+    if threshold is None:
+        raise ValueError("Delayed response monitoring could not resolve a selected_threshold from the scored partition.")
+
+    predicted = (scores >= float(threshold)).astype(int)
+    confusion = _confusion_counts(y_true, predicted)
+    bet_values = pd.to_numeric(frame[bet_value_column], errors="raise").astype(float)
+    ggr_values = pd.to_numeric(frame[ggr_value_column], errors="raise").astype(float)
+
+    positive_mask = y_true == 1
+    negative_mask = y_true == 0
+    predicted_positive_mask = predicted == 1
+
+    row_count = int(len(frame))
+    positive_label_count = int(y_true.sum())
+    negative_label_count = int((y_true == 0).sum())
+    predicted_positive_count = int(predicted.sum())
+    created_at = datetime.utcnow().replace(microsecond=0).isoformat()
+
+    return {
+        "assignment_start_date": str(pt),
+        "assignment_end_date": str(pt),
+        "maturity_horizon_days": None,
+        "status": "evaluated",
+        "status_reason": None,
+        "row_count": row_count,
+        "evaluated_row_count": row_count,
+        "positive_label_count": positive_label_count,
+        "predicted_positive_count": predicted_positive_count,
+        "true_positive_count": confusion["true_positive_count"],
+        "false_positive_count": confusion["false_positive_count"],
+        "false_negative_count": confusion["false_negative_count"],
+        "true_negative_count": confusion["true_negative_count"],
+        "precision": float(precision_score(y_true, predicted, zero_division=0)),
+        "recall": float(recall_score(y_true, predicted, zero_division=0)),
+        "f1_score": float(f1_score(y_true, predicted, zero_division=0)),
+        "response_rate_actual": float(y_true.mean()) if row_count else None,
+        "response_rate_predicted": float(predicted.mean()) if row_count else None,
+        "avg_score": float(scores.mean()) if row_count else None,
+        "avg_score_positive_label": float(scores[positive_mask].mean()) if positive_label_count else None,
+        "avg_score_negative_label": float(scores[negative_mask].mean()) if negative_label_count else None,
+        "total_outcome_gross_bet_3d_value": float(bet_values.sum()) if row_count else None,
+        "total_outcome_gross_ggr_3d_value": float(ggr_values.sum()) if row_count else None,
+        "avg_outcome_gross_bet_3d_value": float(bet_values.mean()) if row_count else None,
+        "avg_outcome_gross_ggr_3d_value": float(ggr_values.mean()) if row_count else None,
+        "predicted_positive_total_gross_bet_3d_value": float(bet_values[predicted_positive_mask].sum()) if predicted_positive_count else 0.0,
+        "predicted_positive_total_gross_ggr_3d_value": float(ggr_values[predicted_positive_mask].sum()) if predicted_positive_count else 0.0,
+        "predicted_positive_avg_gross_bet_3d_value": float(bet_values[predicted_positive_mask].mean()) if predicted_positive_count else None,
+        "predicted_positive_avg_gross_ggr_3d_value": float(ggr_values[predicted_positive_mask].mean()) if predicted_positive_count else None,
+        "threshold": float(threshold),
+        "model_name": _single_value_or_none(frame["model_name"]),
+        "model_version": _single_value_or_none(frame["model_version"]),
+        "created_at": created_at,
+        "pt": str(pt),
+    }
 
 
 def build_not_evaluable_global_row(
@@ -116,179 +159,52 @@ def build_not_evaluable_global_row(
     status_reason: str,
 ) -> Dict[str, Any]:
     return {
-        "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
-        "metric_scope": "global",
-        "segment_column": None,
-        "segment_value": None,
-        "bucket_name": None,
-        "row_count": 0,
-        "positive_count": 0,
-        "observed_positive_rate": None,
-        "avg_predicted_score": None,
-        "predicted_positive_rate": None,
-        "calibration_gap": None,
-        "pr_auc": None,
-        "roc_auc": None,
-        "log_loss": None,
-        "brier_score": None,
-        "score_min": None,
-        "score_max": None,
-        "avg_observed_gross_bet_value": None,
+        "assignment_start_date": str(pt),
+        "assignment_end_date": str(pt),
+        "maturity_horizon_days": None,
         "status": "not_evaluable",
         "status_reason": status_reason,
+        "row_count": 0,
+        "evaluated_row_count": 0,
+        "positive_label_count": 0,
+        "predicted_positive_count": 0,
+        "true_positive_count": 0,
+        "false_positive_count": 0,
+        "false_negative_count": 0,
+        "true_negative_count": 0,
+        "precision": None,
+        "recall": None,
+        "f1_score": None,
+        "response_rate_actual": None,
+        "response_rate_predicted": None,
+        "avg_score": None,
+        "avg_score_positive_label": None,
+        "avg_score_negative_label": None,
+        "total_outcome_gross_bet_3d_value": None,
+        "total_outcome_gross_ggr_3d_value": None,
+        "avg_outcome_gross_bet_3d_value": None,
+        "avg_outcome_gross_ggr_3d_value": None,
+        "predicted_positive_total_gross_bet_3d_value": None,
+        "predicted_positive_total_gross_ggr_3d_value": None,
+        "predicted_positive_avg_gross_bet_3d_value": None,
+        "predicted_positive_avg_gross_ggr_3d_value": None,
+        "threshold": None,
+        "model_name": None,
+        "model_version": None,
+        "created_at": datetime.utcnow().replace(microsecond=0).isoformat(),
         "pt": str(pt),
     }
-
-
-def build_bucket_performance_rows(frame: pd.DataFrame, *, pt: str, response_window_days: int, min_rows: int) -> List[Dict[str, Any]]:
-    label_column = f"observed_response_label_positive_{response_window_days}d"
-    value_column = f"observed_gross_bet_value_{response_window_days}d"
-    rows: List[Dict[str, Any]] = []
-    for bucket_name, bucket_frame in frame.groupby("response_priority_bucket", dropna=False, observed=True):
-        if len(bucket_frame) < min_rows:
-            rows.append(
-                {
-                    "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
-                    "metric_scope": "bucket",
-                    "segment_column": None,
-                    "segment_value": None,
-                    "bucket_name": "__missing__" if pd.isna(bucket_name) else str(bucket_name),
-                    "row_count": int(len(bucket_frame)),
-                    "positive_count": int(pd.to_numeric(bucket_frame[label_column], errors="raise").sum()),
-                    "observed_positive_rate": float(pd.to_numeric(bucket_frame[label_column], errors="raise").mean()) if len(bucket_frame) else 0.0,
-                    "avg_predicted_score": float(pd.to_numeric(bucket_frame["predicted_response_score"], errors="raise").mean()) if len(bucket_frame) else 0.0,
-                    "predicted_positive_rate": None,
-                    "calibration_gap": None,
-                    "pr_auc": None,
-                    "roc_auc": None,
-                    "log_loss": None,
-                    "brier_score": None,
-                    "score_min": float(pd.to_numeric(bucket_frame["predicted_response_score"], errors="raise").min()) if len(bucket_frame) else None,
-                    "score_max": float(pd.to_numeric(bucket_frame["predicted_response_score"], errors="raise").max()) if len(bucket_frame) else None,
-                    "avg_observed_gross_bet_value": float(pd.to_numeric(bucket_frame[value_column], errors="raise").mean()) if len(bucket_frame) else 0.0,
-                    "status": "not_evaluable",
-                    "status_reason": "insufficient_rows",
-                    "pt": str(pt),
-                }
-            )
-            continue
-        y_true = pd.to_numeric(bucket_frame[label_column], errors="raise").astype(int).to_numpy()
-        scores = pd.to_numeric(bucket_frame["predicted_response_score"], errors="raise").astype(float).to_numpy()
-        summary = _metrics(y_true, scores)
-        summary.update(
-            {
-                "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
-                "metric_scope": "bucket",
-                "segment_column": None,
-                "segment_value": None,
-                "bucket_name": "__missing__" if pd.isna(bucket_name) else str(bucket_name),
-                "avg_observed_gross_bet_value": float(pd.to_numeric(bucket_frame[value_column], errors="raise").mean()),
-                "status": "evaluated",
-                "status_reason": None,
-                "pt": str(pt),
-            }
-        )
-        rows.append(summary)
-    return rows
-
-
-def build_segment_performance_rows(
-    frame: pd.DataFrame,
-    *,
-    pt: str,
-    response_window_days: int,
-    segment_columns: Sequence[str],
-    min_rows: int,
-) -> List[Dict[str, Any]]:
-    label_column = f"observed_response_label_positive_{response_window_days}d"
-    value_column = f"observed_gross_bet_value_{response_window_days}d"
-    rows: List[Dict[str, Any]] = []
-    for segment_column in segment_columns:
-        if segment_column not in frame.columns:
-            continue
-        working = frame.copy()
-        working[segment_column] = working[segment_column].fillna("__missing__").astype(str)
-        for segment_value, segment_frame in working.groupby(segment_column, dropna=False, observed=True):
-            if len(segment_frame) < min_rows:
-                rows.append(
-                    {
-                        "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
-                        "metric_scope": "segment",
-                        "segment_column": segment_column,
-                        "segment_value": str(segment_value),
-                        "bucket_name": None,
-                        "row_count": int(len(segment_frame)),
-                        "positive_count": int(pd.to_numeric(segment_frame[label_column], errors="raise").sum()),
-                        "observed_positive_rate": float(pd.to_numeric(segment_frame[label_column], errors="raise").mean()) if len(segment_frame) else 0.0,
-                        "avg_predicted_score": float(pd.to_numeric(segment_frame["predicted_response_score"], errors="raise").mean()) if len(segment_frame) else 0.0,
-                        "predicted_positive_rate": None,
-                        "calibration_gap": None,
-                        "pr_auc": None,
-                        "roc_auc": None,
-                        "log_loss": None,
-                        "brier_score": None,
-                        "score_min": float(pd.to_numeric(segment_frame["predicted_response_score"], errors="raise").min()) if len(segment_frame) else None,
-                        "score_max": float(pd.to_numeric(segment_frame["predicted_response_score"], errors="raise").max()) if len(segment_frame) else None,
-                        "avg_observed_gross_bet_value": float(pd.to_numeric(segment_frame[value_column], errors="raise").mean()) if len(segment_frame) else 0.0,
-                        "status": "not_evaluable",
-                        "status_reason": "insufficient_rows",
-                        "pt": str(pt),
-                    }
-                )
-                continue
-            y_true = pd.to_numeric(segment_frame[label_column], errors="raise").astype(int).to_numpy()
-            scores = pd.to_numeric(segment_frame["predicted_response_score"], errors="raise").astype(float).to_numpy()
-            summary = _metrics(y_true, scores)
-            summary.update(
-                {
-                    "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
-                    "metric_scope": "segment",
-                    "segment_column": segment_column,
-                    "segment_value": str(segment_value),
-                    "bucket_name": None,
-                    "avg_observed_gross_bet_value": float(pd.to_numeric(segment_frame[value_column], errors="raise").mean()),
-                    "status": "evaluated",
-                    "status_reason": None,
-                    "pt": str(pt),
-                }
-            )
-            rows.append(summary)
-    return rows
-
-
-def build_calibration_rows(frame: pd.DataFrame, *, pt: str, response_window_days: int, bins: int = 10) -> List[Dict[str, Any]]:
-    label_column = f"observed_response_label_positive_{response_window_days}d"
-    working = frame.copy()
-    working["predicted_response_score"] = pd.to_numeric(working["predicted_response_score"], errors="raise").astype(float)
-    working[label_column] = pd.to_numeric(working[label_column], errors="raise").astype(int)
-    if working.empty:
-        return []
-    quantile_count = min(bins, len(working))
-    working["calibration_bin"] = pd.qcut(working["predicted_response_score"].rank(method="first"), q=quantile_count, duplicates="drop")
-    rows: List[Dict[str, Any]] = []
-    for score_bin, bin_frame in working.groupby("calibration_bin", dropna=False, observed=False):
-        rows.append(
-            {
-                "pt": str(pt),
-                "calibration_bin": str(score_bin),
-                "row_count": int(len(bin_frame)),
-                "average_predicted_score": float(bin_frame["predicted_response_score"].mean()),
-                "actual_positive_rate": float(bin_frame[label_column].mean()),
-                "calibration_gap": float(abs(bin_frame["predicted_response_score"].mean() - bin_frame[label_column].mean())),
-            }
-        )
-    return rows
 
 
 def build_performance_alerts(
     *,
     config: ResponseMonitoringConfig,
     global_row: Dict[str, Any],
-    calibration_rows: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     alerts: List[Dict[str, Any]] = []
     now = datetime.utcnow().replace(microsecond=0).isoformat()
     thresholds = config.performance
+
     if int(global_row["row_count"]) < thresholds.min_rows:
         alerts.append(
             {
@@ -303,28 +219,29 @@ def build_performance_alerts(
                 "context": {},
             }
         )
-    if int(global_row["positive_count"]) < thresholds.min_positive:
+    if int(global_row["positive_label_count"]) < thresholds.min_positive:
         alerts.append(
             {
                 "monitor_run_ts": now,
                 "severity": "warning",
                 "check_name": "insufficient_positive_events",
-                "metric_name": "positive_count",
-                "observed_value": global_row["positive_count"],
+                "metric_name": "positive_label_count",
+                "observed_value": global_row["positive_label_count"],
                 "threshold_value": thresholds.min_positive,
                 "reference_value": None,
                 "message": "Observed positive-response count is too small for stable delayed monitoring.",
                 "context": {},
             }
         )
-    response_rate = float(global_row["observed_positive_rate"])
+
+    response_rate = float(global_row["response_rate_actual"])
     if response_rate <= thresholds.response_rate_floor_alert:
         alerts.append(
             {
                 "monitor_run_ts": now,
                 "severity": "critical",
                 "check_name": "realized_response_collapse",
-                "metric_name": "observed_positive_rate",
+                "metric_name": "response_rate_actual",
                 "observed_value": response_rate,
                 "threshold_value": thresholds.response_rate_floor_alert,
                 "reference_value": None,
@@ -338,7 +255,7 @@ def build_performance_alerts(
                 "monitor_run_ts": now,
                 "severity": "warning",
                 "check_name": "realized_response_collapse",
-                "metric_name": "observed_positive_rate",
+                "metric_name": "response_rate_actual",
                 "observed_value": response_rate,
                 "threshold_value": thresholds.response_rate_floor_warn,
                 "reference_value": None,
@@ -346,51 +263,36 @@ def build_performance_alerts(
                 "context": {},
             }
         )
-    calibration_gap = float(global_row["calibration_gap"])
-    if calibration_gap >= thresholds.calibration_gap_alert:
+
+    score_gap = abs(float(global_row["avg_score"]) - float(global_row["response_rate_actual"]))
+    if score_gap >= thresholds.calibration_gap_alert:
         alerts.append(
             {
                 "monitor_run_ts": now,
                 "severity": "critical",
                 "check_name": "calibration_gap",
-                "metric_name": "global_calibration_gap",
-                "observed_value": calibration_gap,
+                "metric_name": "avg_score_vs_actual_response_rate_gap",
+                "observed_value": score_gap,
                 "threshold_value": thresholds.calibration_gap_alert,
                 "reference_value": None,
                 "message": "Average predicted score and delayed observed response rate diverged materially.",
                 "context": {},
             }
         )
-    elif calibration_gap >= thresholds.calibration_gap_warn:
+    elif score_gap >= thresholds.calibration_gap_warn:
         alerts.append(
             {
                 "monitor_run_ts": now,
                 "severity": "warning",
                 "check_name": "calibration_gap",
-                "metric_name": "global_calibration_gap",
-                "observed_value": calibration_gap,
+                "metric_name": "avg_score_vs_actual_response_rate_gap",
+                "observed_value": score_gap,
                 "threshold_value": thresholds.calibration_gap_warn,
                 "reference_value": None,
                 "message": "Average predicted score and delayed observed response rate are diverging.",
                 "context": {},
             }
         )
-    if calibration_rows:
-        worst_gap = max(float(row["calibration_gap"]) for row in calibration_rows)
-        if worst_gap >= thresholds.calibration_gap_alert:
-            alerts.append(
-                {
-                    "monitor_run_ts": now,
-                    "severity": "warning",
-                    "check_name": "bin_level_calibration_gap",
-                    "metric_name": "max_bin_calibration_gap",
-                    "observed_value": worst_gap,
-                    "threshold_value": thresholds.calibration_gap_alert,
-                    "reference_value": None,
-                    "message": "At least one calibration bin shows materially weak alignment between score and observed response.",
-                    "context": {},
-                }
-            )
     return alerts
 
 
@@ -399,9 +301,6 @@ def build_performance_markdown_report(
     pt: str,
     maturity_summary: Dict[str, Any],
     global_row: Dict[str, Any],
-    bucket_rows: List[Dict[str, Any]],
-    segment_rows: List[Dict[str, Any]],
-    calibration_rows: List[Dict[str, Any]],
     alerts: List[Dict[str, Any]],
 ) -> List[str]:
     def _fmt(value: Any) -> str:
@@ -420,49 +319,17 @@ def build_performance_markdown_report(
         f"- matured on date: `{maturity_summary['matured_on_date']}`",
         f"- labels mature: `{maturity_summary.get('labels_mature')}`",
         f"- status: `{global_row['status']}`",
-        f"- global rows: `{global_row['row_count']}`",
-        f"- observed positive count / rate: `{global_row['positive_count']}` / `{_fmt(global_row['observed_positive_rate'])}`",
-        f"- average predicted score: `{_fmt(global_row['avg_predicted_score'])}`",
-        f"- calibration gap: `{_fmt(global_row['calibration_gap'])}`",
-        f"- PR AUC / ROC AUC: `{_fmt(global_row['pr_auc'])}` / `{_fmt(global_row['roc_auc'])}`",
+        f"- rows / evaluated rows: `{global_row['row_count']}` / `{global_row['evaluated_row_count']}`",
+        f"- positive label count / rate: `{global_row['positive_label_count']}` / `{_fmt(global_row['response_rate_actual'])}`",
+        f"- predicted positive count / rate: `{global_row['predicted_positive_count']}` / `{_fmt(global_row['response_rate_predicted'])}`",
+        f"- threshold: `{_fmt(global_row['threshold'])}`",
+        f"- precision / recall / f1: `{_fmt(global_row['precision'])}` / `{_fmt(global_row['recall'])}` / `{_fmt(global_row['f1_score'])}`",
+        f"- average score: `{_fmt(global_row['avg_score'])}`",
+        f"- total gross bet / gross ggr: `{_fmt(global_row['total_outcome_gross_bet_3d_value'])}` / `{_fmt(global_row['total_outcome_gross_ggr_3d_value'])}`",
         "",
-        "## Bucket-Level Observational Performance",
+        "## Alerts",
         "",
-        "| bucket | rows | observed_positive_rate | avg_predicted_score | calibration_gap | status |",
-        "| --- | ---: | ---: | ---: | ---: | --- |",
     ]
-    for row in bucket_rows:
-        gap = _fmt(row["calibration_gap"])
-        lines.append(
-            f"| {row['bucket_name']} | {row['row_count']} | {_fmt(row['observed_positive_rate'])} | {_fmt(row['avg_predicted_score'])} | {gap} | {row['status']} |"
-        )
-    lines.extend(
-        [
-            "",
-            "## Segment-Level Observational Performance",
-            "",
-            "| segment_column | segment_value | rows | observed_positive_rate | avg_predicted_score | status |",
-            "| --- | --- | ---: | ---: | ---: | --- |",
-        ]
-    )
-    for row in segment_rows:
-        lines.append(
-            f"| {row['segment_column']} | {row['segment_value']} | {row['row_count']} | {_fmt(row['observed_positive_rate'])} | {_fmt(row['avg_predicted_score'])} | {row['status']} |"
-        )
-    lines.extend(
-        [
-            "",
-            "## Calibration Summary",
-            "",
-            "| bin | rows | average_predicted_score | actual_positive_rate | calibration_gap |",
-            "| --- | ---: | ---: | ---: | ---: |",
-        ]
-    )
-    for row in calibration_rows:
-        lines.append(
-            f"| {row['calibration_bin']} | {row['row_count']} | {_fmt(row['average_predicted_score'])} | {_fmt(row['actual_positive_rate'])} | {_fmt(row['calibration_gap'])} |"
-        )
-    lines.extend(["", "## Alerts", ""])
     if not alerts:
         lines.append("- none")
     else:

@@ -116,6 +116,7 @@ filtered_outcomes as (
     select
         login_name,
         bet_amount,
+        gross_gaming_revenue,
         stat_date,
         {outcome_partition_column}
     from {outcome_source_table}
@@ -127,6 +128,7 @@ outcomes as (
         s.player_id,
         s.scoring_pt,
         sum(cast(o.bet_amount as double)) as observed_gross_bet_value_{response_window_days}d,
+        sum(cast(o.gross_gaming_revenue as double)) as observed_gross_ggr_value_{response_window_days}d,
         count(o.login_name) as observed_outcome_source_rows_{response_window_days}d,
         min(cast(o.stat_date as date)) as first_observed_outcome_date,
         max(cast(o.stat_date as date)) as last_observed_outcome_date
@@ -149,6 +151,7 @@ select
     s.model_name,
     s.model_version,
     cast(coalesce(o.observed_gross_bet_value_{response_window_days}d, 0.0) as double) as observed_gross_bet_value_{response_window_days}d,
+    cast(coalesce(o.observed_gross_ggr_value_{response_window_days}d, 0.0) as double) as observed_gross_ggr_value_{response_window_days}d,
     case when coalesce(o.observed_gross_bet_value_{response_window_days}d, 0.0) > 0 then cast(1 as bigint) else cast(0 as bigint) end as observed_response_label_positive_{response_window_days}d,
     cast(coalesce(o.observed_outcome_source_rows_{response_window_days}d, 0) as bigint) as observed_outcome_source_rows_{response_window_days}d,
     o.first_observed_outcome_date,

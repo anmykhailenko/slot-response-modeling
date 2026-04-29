@@ -456,8 +456,8 @@ def choose_threshold(
     frame = pd.DataFrame(rows).sort_values("threshold").reset_index(drop=True)
 
     selection_config = threshold_selection_config or {}
-    policy = str(selection_config.get("policy", "best_f1")).strip().lower()
-    fallback_policy = str(selection_config.get("fallback_policy", "best_f1")).strip().lower()
+    policy = str(selection_config.get("policy", "max_precision_with_min_recall")).strip().lower()
+    fallback_policy = str(selection_config.get("fallback_policy", "max_precision")).strip().lower()
     minimum_recall = float(selection_config.get("minimum_recall", 0.0) or 0.0)
 
     if policy == "max_precision_with_min_recall":
@@ -469,6 +469,13 @@ def choose_threshold(
             ).iloc[0]
             return float(selected["threshold"]), frame, f"max_precision_with_min_recall(minimum_recall={minimum_recall:.2f})"
         policy = fallback_policy
+
+    if policy == "max_precision":
+        selected = frame.sort_values(
+            ["precision", "recall", "f1", "threshold"],
+            ascending=[False, False, False, False],
+        ).iloc[0]
+        return float(selected["threshold"]), frame, "max_precision"
 
     if policy != "best_f1":
         raise ValueError(f"Unsupported threshold selection policy `{policy}`.")

@@ -68,7 +68,7 @@ threshold_grid:
 threshold_selection:
   policy: max_precision_with_min_recall
   minimum_recall: 0.60
-  fallback_policy: best_f1
+  fallback_policy: max_precision
 
 models:
   logistic_regression:
