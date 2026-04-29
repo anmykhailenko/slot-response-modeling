@@ -168,6 +168,8 @@ def write_frame_to_odps(
     payload_columns = [column.name for column in target_table.table_schema.simple_columns]
     payload = df.drop(columns=[partition_column], errors="ignore").copy()
     payload = payload.reindex(columns=payload_columns)
+    if payload.empty:
+        return
     odps_type_names = [str(column.type).strip().lower() for column in target_table.table_schema.simple_columns]
     try:
         client.write_table(
