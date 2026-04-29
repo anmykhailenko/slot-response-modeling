@@ -4,10 +4,16 @@ response_window_days: 3
 maturity_buffer_days: 1
 champion_reference_path: model_registry/response_current.json
 
-splits:
-  train_fraction: 0.6
-  validation_fraction: 0.2
-  test_fraction: 0.2
+odps_reader:
+  use_arrow: false
+  arrow_diagnostic_enabled: false
+  fallback_row_threshold: 5000000
+
+split_policy:
+  train_days: 30
+  validation_days: 7
+  test_days: 14
+  require_contiguous_partitions: true
 
 target_column: response_label_positive_3d
 numeric_feature_columns:

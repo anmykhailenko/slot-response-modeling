@@ -147,32 +147,70 @@ def fetch_sql_as_frame(
     odps_client: Optional[Any] = None,
     batch_size: int = 500000,
     use_tunnel: bool = True,
+    use_arrow: bool = True,
+    arrow_diagnostic_enabled: bool = False,
+    fallback_row_threshold: int = 2_000_000,
+    expected_rows: Optional[int] = None,
+    execution_details: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     client = odps_client or create_odps_client_from_env()
     LOGGER.info("Executing ODPS SQL: %s", sql)
     instance = client.execute_sql(sql)
     frames: List[pd.DataFrame] = []
-    try:
-        with instance.open_reader(tunnel=use_tunnel, arrow=True) as reader:
-            frames = list(reader.iter_pandas(batch_size=batch_size))
-    except Exception as exc:
-        is_arrow_error = False
-        if pa is not None:
-            arrow_error_types: tuple[type[BaseException], ...] = tuple(
-                error_type
-                for error_type in (
-                    getattr(pa, "ArrowInvalid", None),
-                    getattr(pa, "ArrowTypeError", None),
-                    getattr(pa, "ArrowException", None),
-                )
-                if error_type is not None
-            )
-            is_arrow_error = isinstance(exc, arrow_error_types)
-        if not is_arrow_error:
-            raise
-        LOGGER.warning("Arrow ODPS reader failed, retrying without Arrow: %s", exc)
+    details = execution_details if execution_details is not None else {}
+    details.update(
+        {
+            "arrow_enabled": bool(use_arrow),
+            "arrow_diagnostic_enabled": bool(arrow_diagnostic_enabled),
+            "fallback_row_threshold": int(fallback_row_threshold),
+            "expected_rows": None if expected_rows is None else int(expected_rows),
+            "fallback_used": False,
+        }
+    )
+
+    if not use_arrow:
+        LOGGER.info("ODPS Arrow reader disabled for this query; using non-Arrow reader directly.")
         with instance.open_reader(tunnel=use_tunnel, arrow=False) as reader:
             frames = list(reader.iter_pandas(batch_size=batch_size))
+    else:
+        try:
+            with instance.open_reader(tunnel=use_tunnel, arrow=True) as reader:
+                frames = list(reader.iter_pandas(batch_size=batch_size))
+        except Exception as exc:
+            is_arrow_error = False
+            if pa is not None:
+                arrow_error_types: tuple[type[BaseException], ...] = tuple(
+                    error_type
+                    for error_type in (
+                        getattr(pa, "ArrowInvalid", None),
+                        getattr(pa, "ArrowTypeError", None),
+                        getattr(pa, "ArrowException", None),
+                    )
+                    if error_type is not None
+                )
+                is_arrow_error = isinstance(exc, arrow_error_types)
+            if not is_arrow_error:
+                raise
+
+            expected_rows_text = "unknown" if expected_rows is None else f"{int(expected_rows):,}"
+            if expected_rows is not None and expected_rows > int(fallback_row_threshold):
+                raise RuntimeError(
+                    "Arrow ODPS reader failed and non-Arrow fallback is blocked because "
+                    f"expected_rows={expected_rows_text} exceeds fallback_row_threshold={int(fallback_row_threshold):,}."
+                ) from exc
+
+            LOGGER.warning(
+                "Arrow ODPS reader failed; using non-Arrow fallback. expected_rows=%s threshold=%s error=%s",
+                expected_rows_text,
+                f"{int(fallback_row_threshold):,}",
+                exc,
+            )
+            if arrow_diagnostic_enabled:
+                LOGGER.warning("Arrow diagnostic requested but no additional probe is configured; proceeding with fallback.")
+
+            details["fallback_used"] = True
+            with instance.open_reader(tunnel=use_tunnel, arrow=False) as reader:
+                frames = list(reader.iter_pandas(batch_size=batch_size))
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
@@ -186,6 +224,11 @@ def read_odps_table(
     where_clauses: Optional[Iterable[str]] = None,
     odps_client: Optional[Any] = None,
     batch_size: int = 500000,
+    use_arrow: bool = True,
+    arrow_diagnostic_enabled: bool = False,
+    fallback_row_threshold: int = 2_000_000,
+    expected_rows: Optional[int] = None,
+    execution_details: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     sql = build_select_sql(
         table_name=table_name,
@@ -193,7 +236,16 @@ def read_odps_table(
         filters=filters,
         where_clauses=where_clauses,
     )
-    return fetch_sql_as_frame(sql, odps_client=odps_client, batch_size=batch_size)
+    return fetch_sql_as_frame(
+        sql,
+        odps_client=odps_client,
+        batch_size=batch_size,
+        use_arrow=use_arrow,
+        arrow_diagnostic_enabled=arrow_diagnostic_enabled,
+        fallback_row_threshold=fallback_row_threshold,
+        expected_rows=expected_rows,
+        execution_details=execution_details,
+    )
 
 
 def ensure_columns_exist(df: pd.DataFrame, required_columns: Sequence[str], context: str) -> None:

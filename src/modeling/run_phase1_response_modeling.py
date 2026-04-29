@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import re
@@ -9,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import joblib
 import numpy as np
@@ -56,12 +57,40 @@ else:  # pragma: no cover
     from .generate_response_model_reporting import generate_reporting_artifacts
 
 
+LOGGER = logging.getLogger(__name__)
+TEMPORAL_STRING_CAST_COLUMNS = {
+    "assignment_date",
+    "treatment_timestamp",
+    "feature_snapshot_date",
+    "first_outcome_event_date",
+    "last_outcome_event_date",
+    "feature_create_time",
+}
+
+
 @dataclass(frozen=True)
 class RuntimeWindow:
     min_pt: str
     max_pt: str
     maturity_end_pt: str
     modeling_end_pt: str
+
+
+@dataclass(frozen=True)
+class SplitWindow:
+    name: str
+    start_pt: str
+    end_pt: str
+    pts: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SplitPlan:
+    mature_cutoff_pt: str
+    selected_mature_pts: Tuple[str, ...]
+    train: SplitWindow
+    validation: SplitWindow
+    test: SplitWindow
 
 
 def load_yaml(path: Path) -> Dict[str, Any]:
@@ -150,6 +179,14 @@ def partition_value(spec: Any) -> str:
     return match.group(1)
 
 
+def pt_to_date(pt: str) -> date:
+    return datetime.strptime(str(pt), "%Y%m%d").date()
+
+
+def format_pt_as_date(pt: str) -> str:
+    return pt_to_date(pt).strftime("%Y-%m-%d")
+
+
 def list_partitions(table_name: str) -> List[str]:
     project, table = table_name.split(".", 1)
     client = create_odps_client_from_env()
@@ -183,6 +220,84 @@ def build_partition_predicate(start_pt: str, end_pt: str) -> str:
     return f"pt >= '{start_pt}' and pt <= '{end_pt}'"
 
 
+def build_split_policy(config: Dict[str, Any]) -> Dict[str, Any]:
+    split_policy = dict(config.get("split_policy", {}))
+    return {
+        "train_days": int(split_policy.get("train_days", 30)),
+        "validation_days": int(split_policy.get("validation_days", 7)),
+        "test_days": int(split_policy.get("test_days", 14)),
+        "require_contiguous_partitions": bool(split_policy.get("require_contiguous_partitions", True)),
+    }
+
+
+def resolve_split_plan(runtime_window: RuntimeWindow, partitions: Sequence[str], split_policy: Dict[str, Any]) -> SplitPlan:
+    mature_partitions = [str(pt) for pt in partitions if str(pt) <= runtime_window.modeling_end_pt]
+    total_required_days = int(split_policy["train_days"]) + int(split_policy["validation_days"]) + int(split_policy["test_days"])
+    if len(mature_partitions) < total_required_days:
+        raise ValueError(
+            "Not enough mature partitions for the configured split policy. "
+            f"required={total_required_days}, available={len(mature_partitions)}, mature_cutoff={runtime_window.modeling_end_pt}."
+        )
+
+    selected = mature_partitions[-total_required_days:]
+    if bool(split_policy["require_contiguous_partitions"]):
+        expected = [
+            (pt_to_date(selected[0]) + timedelta(days=offset)).strftime("%Y%m%d")
+            for offset in range(total_required_days)
+        ]
+        if selected != expected:
+            raise ValueError(
+                "Configured split policy requires contiguous mature partitions, "
+                f"but the selected range {selected[0]}..{selected[-1]} has gaps."
+            )
+
+    train_days = int(split_policy["train_days"])
+    validation_days = int(split_policy["validation_days"])
+    train_pts = tuple(selected[:train_days])
+    validation_pts = tuple(selected[train_days : train_days + validation_days])
+    test_pts = tuple(selected[train_days + validation_days :])
+
+    return SplitPlan(
+        mature_cutoff_pt=runtime_window.modeling_end_pt,
+        selected_mature_pts=tuple(selected),
+        train=SplitWindow("train", train_pts[0], train_pts[-1], train_pts),
+        validation=SplitWindow("validation", validation_pts[0], validation_pts[-1], validation_pts),
+        test=SplitWindow("test", test_pts[0], test_pts[-1], test_pts),
+    )
+
+
+def split_manifest_from_plan(split_plan: SplitPlan) -> Dict[str, List[str]]:
+    return {
+        "train": list(split_plan.train.pts),
+        "validation": list(split_plan.validation.pts),
+        "test": list(split_plan.test.pts),
+    }
+
+
+def estimate_memory_bytes(row_count: int, column_count: int) -> int:
+    bytes_per_row = max(256, int(column_count) * 32)
+    return int(row_count) * bytes_per_row
+
+
+def format_bytes(num_bytes: int) -> str:
+    if num_bytes <= 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(num_bytes)
+    for unit in units:
+        if size < 1024.0 or unit == units[-1]:
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} TB"
+
+
+def build_select_expression(column: str) -> str:
+    normalized = str(column).strip()
+    if normalized in TEMPORAL_STRING_CAST_COLUMNS:
+        return f"cast({normalized} as string) as {normalized}"
+    return normalized
+
+
 def build_sample_sql(
     *,
     table_name: str,
@@ -190,16 +305,33 @@ def build_sample_sql(
     start_pt: str,
     end_pt: str,
 ) -> str:
-    selected_columns = ", ".join(dict.fromkeys(columns))
+    selected_columns = ", ".join(build_select_expression(column) for column in dict.fromkeys(columns))
     return f"select {selected_columns} from {table_name} where {build_partition_predicate(start_pt, end_pt)}"
 
 
-def fetch_frame(sql: str, batch_size: int = 250000) -> pd.DataFrame:
+def fetch_frame(
+    sql: str,
+    batch_size: int = 250000,
+    *,
+    reader_config: Optional[Dict[str, Any]] = None,
+    expected_rows: Optional[int] = None,
+    execution_details: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
     client = create_odps_client_from_env()
-    return fetch_sql_as_frame(sql, odps_client=client, batch_size=batch_size)
+    runtime_reader_config = dict(reader_config or {})
+    return fetch_sql_as_frame(
+        sql,
+        odps_client=client,
+        batch_size=batch_size,
+        use_arrow=bool(runtime_reader_config.get("use_arrow", True)),
+        arrow_diagnostic_enabled=bool(runtime_reader_config.get("arrow_diagnostic_enabled", False)),
+        fallback_row_threshold=int(runtime_reader_config.get("fallback_row_threshold", 2_000_000)),
+        expected_rows=expected_rows,
+        execution_details=execution_details,
+    )
 
 
-def fetch_live_audit_frames(table_name: str, runtime_window: RuntimeWindow) -> Dict[str, pd.DataFrame]:
+def fetch_live_audit_frames(table_name: str, runtime_window: RuntimeWindow, *, reader_config: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
     full_predicate = build_partition_predicate(runtime_window.min_pt, runtime_window.max_pt)
     mature_predicate = build_partition_predicate(runtime_window.min_pt, runtime_window.modeling_end_pt)
     queries = {
@@ -248,7 +380,7 @@ def fetch_live_audit_frames(table_name: str, runtime_window: RuntimeWindow) -> D
             f"select * from {table_name} where pt = '{runtime_window.modeling_end_pt}' limit 5"
         ),
     }
-    return {name: fetch_frame(sql, batch_size=100000) for name, sql in queries.items()}
+    return {name: fetch_frame(sql, batch_size=100000, reader_config=reader_config, expected_rows=1000) for name, sql in queries.items()}
 
 
 def to_datetime_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -258,28 +390,28 @@ def to_datetime_columns(frame: pd.DataFrame) -> pd.DataFrame:
             converted[column] = pd.to_datetime(converted[column], errors="coerce")
     if "treatment_timestamp" in converted.columns:
         converted["treatment_timestamp"] = pd.to_datetime(converted["treatment_timestamp"], errors="coerce")
+    if "feature_create_time" in converted.columns:
+        converted["feature_create_time"] = pd.to_datetime(converted["feature_create_time"], errors="coerce")
     return converted
 
 
-def assign_time_splits(frame: pd.DataFrame, train_fraction: float, validation_fraction: float) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
+def assign_time_splits(frame: pd.DataFrame, split_plan: SplitPlan) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
     working = frame.copy()
     distinct_pts = sorted(working["pt"].astype(str).dropna().unique().tolist())
-    if len(distinct_pts) < 5:
-        raise ValueError("At least 5 distinct `pt` values are required for a defensible time-based split.")
-    train_count = max(1, int(len(distinct_pts) * train_fraction))
-    validation_count = max(1, int(len(distinct_pts) * validation_fraction))
-    if train_count + validation_count >= len(distinct_pts):
-        validation_count = 1
-        train_count = len(distinct_pts) - 2
-    train_pts = distinct_pts[:train_count]
-    validation_pts = distinct_pts[train_count : train_count + validation_count]
-    test_pts = distinct_pts[train_count + validation_count :]
+    expected_pts = list(split_plan.selected_mature_pts)
+    if distinct_pts != expected_pts:
+        raise ValueError(
+            "Loaded data does not match the configured split window. "
+            f"expected_pts={expected_pts[0]}..{expected_pts[-1]} ({len(expected_pts)} partitions), "
+            f"actual_pts={distinct_pts[0] if distinct_pts else 'NA'}..{distinct_pts[-1] if distinct_pts else 'NA'} ({len(distinct_pts)} partitions)."
+        )
+    split_manifest = split_manifest_from_plan(split_plan)
     working["split"] = np.where(
-        working["pt"].isin(train_pts),
+        working["pt"].isin(split_manifest["train"]),
         "train",
-        np.where(working["pt"].isin(validation_pts), "validation", "test"),
+        np.where(working["pt"].isin(split_manifest["validation"]), "validation", "test"),
     )
-    return working, {"train": train_pts, "validation": validation_pts, "test": test_pts}
+    return working, split_manifest
 
 
 def classification_threshold_metrics(y_true: np.ndarray, y_score: np.ndarray, threshold: float) -> Dict[str, Any]:
@@ -957,8 +1089,8 @@ The detailed column-level missingness check below is computed on the reproducibl
 ## Split Strategy
 
 - Strategy: time-based split on `pt`.
-- Sampling: disabled in the canonical runtime. Training uses the full mature ODPS partition window.
-- Mature modeling window: `{runtime_window.min_pt}` to `{runtime_window.modeling_end_pt}`.
+- Sampling: disabled in the canonical runtime. Training uses the full configured mature ODPS split window.
+- Mature modeling window used for model fitting/evaluation: `{split_frame['start_pt'].min()}` to `{split_frame['end_pt'].max()}`.
 - Split manifest:
 
 {markdown_table(split_frame)}
@@ -991,7 +1123,7 @@ The detailed column-level missingness check below is computed on the reproducibl
     baseline_report = f"""
 # Phase-1 Response Model Baseline Results
 
-The baselines below are observational response models trained on a reproducible `{format_float(sample_pct, digits=1)}%` ODPS hash sample from mature partitions only.
+The baselines below are observational response models trained on the full configured mature ODPS split window only.
 
 ## Model Comparison
 
@@ -1119,31 +1251,125 @@ def sampled_missingness(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["missing_rate", "column_name"], ascending=[False, True]).reset_index(drop=True)
 
 
+def count_rows_for_predicate(
+    table_name: str,
+    predicate: str,
+    *,
+    reader_config: Dict[str, Any],
+) -> int:
+    sql = f"select count(*) as row_count from {table_name} where {predicate}"
+    frame = fetch_frame(sql, batch_size=10000, reader_config=reader_config, expected_rows=1)
+    if frame.empty:
+        return 0
+    return int(frame.iloc[0]["row_count"])
+
+
+def count_rows_by_split(
+    table_name: str,
+    split_plan: SplitPlan,
+    *,
+    reader_config: Dict[str, Any],
+) -> Dict[str, int]:
+    return {
+        window.name: count_rows_for_predicate(
+            table_name,
+            build_partition_predicate(window.start_pt, window.end_pt),
+            reader_config=reader_config,
+        )
+        for window in (split_plan.train, split_plan.validation, split_plan.test)
+    }
+
+
+def log_split_plan(runtime_window: RuntimeWindow, split_plan: SplitPlan, row_counts: Dict[str, int], extraction_columns: Sequence[str]) -> None:
+    total_rows_before_pull = int(sum(row_counts.values()))
+    estimated_memory = estimate_memory_bytes(total_rows_before_pull, len(list(extraction_columns)))
+    print(
+        f"[PHASE1] live_range={runtime_window.min_pt}..{runtime_window.max_pt} "
+        f"mature_cutoff={split_plan.mature_cutoff_pt}",
+        flush=True,
+    )
+    print(
+        f"[PHASE1] train_start={split_plan.train.start_pt} train_end={split_plan.train.end_pt} "
+        f"validation_start={split_plan.validation.start_pt} validation_end={split_plan.validation.end_pt} "
+        f"test_start={split_plan.test.start_pt} test_end={split_plan.test.end_pt}",
+        flush=True,
+    )
+    print(
+        f"[PHASE1] row_counts train={row_counts['train']} validation={row_counts['validation']} "
+        f"test={row_counts['test']} total_rows_before_pull={total_rows_before_pull}",
+        flush=True,
+    )
+    print(
+        f"[PHASE1] memory_estimate={format_bytes(estimated_memory)} "
+        f"assumption=~{max(256, len(list(extraction_columns)) * 32)}B_per_row",
+        flush=True,
+    )
+
+
+def log_dry_run_details(
+    *,
+    partitions: Sequence[str],
+    runtime_window: RuntimeWindow,
+    split_plan: SplitPlan,
+    row_counts: Dict[str, int],
+    extraction_columns: Sequence[str],
+    full_pull_sql: str,
+) -> None:
+    print(f"[PHASE1][DRY_RUN] partition_count={len(partitions)}", flush=True)
+    print(f"[PHASE1][DRY_RUN] partitions={','.join(str(pt) for pt in partitions)}", flush=True)
+    print(
+        f"[PHASE1][DRY_RUN] mature_partitions_selected={','.join(split_plan.selected_mature_pts)}",
+        flush=True,
+    )
+    print(
+        f"[PHASE1][DRY_RUN] where_train={build_partition_predicate(split_plan.train.start_pt, split_plan.train.end_pt)}",
+        flush=True,
+    )
+    print(
+        "[PHASE1][DRY_RUN] "
+        f"where_validation={build_partition_predicate(split_plan.validation.start_pt, split_plan.validation.end_pt)}",
+        flush=True,
+    )
+    print(
+        f"[PHASE1][DRY_RUN] where_test={build_partition_predicate(split_plan.test.start_pt, split_plan.test.end_pt)}",
+        flush=True,
+    )
+    print(
+        f"[PHASE1][DRY_RUN] where_full_pull={build_partition_predicate(split_plan.train.start_pt, split_plan.test.end_pt)}",
+        flush=True,
+    )
+    print(f"[PHASE1][DRY_RUN] full_pull_sql={full_pull_sql}", flush=True)
+    log_split_plan(runtime_window, split_plan, row_counts, extraction_columns)
+
+
 def main() -> None:
     bootstrap_runtime_environment()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
     parser = argparse.ArgumentParser(description="Run Phase-1 observational response modeling from the ODPS response table.")
     parser.add_argument(
         "--config-path",
         default=str(PROJECT_ROOT / "configs" / "response_model.yaml"),
         help="Path to the Phase-1 response modeling config.",
     )
+    parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
 
     config_path = Path(args.config_path).resolve()
     config = load_yaml(config_path)
+    reader_config = {
+        "use_arrow": bool(config.get("odps_reader", {}).get("use_arrow", False)),
+        "arrow_diagnostic_enabled": bool(config.get("odps_reader", {}).get("arrow_diagnostic_enabled", False)),
+        "fallback_row_threshold": int(config.get("odps_reader", {}).get("fallback_row_threshold", 5_000_000)),
+    }
+    split_policy = build_split_policy(config)
     artifacts_dir = ensure_dir((PROJECT_ROOT / config["artifacts"]["output_dir"]).resolve())
     model_dir = ensure_dir(artifacts_dir / "models")
 
     print("[PHASE1] listing live ODPS partitions", flush=True)
     partitions = list_partitions(str(config["source_table"]))
     runtime_window = resolve_runtime_window(config, partitions)
-    print(
-        f"[PHASE1] live_range={runtime_window.min_pt}..{runtime_window.max_pt} mature_cutoff={runtime_window.modeling_end_pt}",
-        flush=True,
-    )
-    print("[PHASE1] fetching schema and audit summaries", flush=True)
-    schema_frame = build_schema_frame(str(config["source_table"]))
-    audit_frames = fetch_live_audit_frames(str(config["source_table"]), runtime_window)
+    split_plan = resolve_split_plan(runtime_window, partitions, split_policy)
+    split_manifest = split_manifest_from_plan(split_plan)
 
     extraction_columns = [
         "player_id",
@@ -1170,23 +1396,63 @@ def main() -> None:
     sample_sql = build_sample_sql(
         table_name=str(config["source_table"]),
         columns=extraction_columns,
-        start_pt=runtime_window.min_pt,
-        end_pt=runtime_window.modeling_end_pt,
+        start_pt=split_plan.train.start_pt,
+        end_pt=split_plan.test.end_pt,
     )
+    row_counts = count_rows_by_split(str(config["source_table"]), split_plan, reader_config=reader_config)
+    log_split_plan(runtime_window, split_plan, row_counts, extraction_columns)
+    print(
+        f"[PHASE1] arrow_enabled={str(reader_config['use_arrow']).lower()} "
+        f"arrow_diagnostic_enabled={str(reader_config['arrow_diagnostic_enabled']).lower()} "
+        f"fallback_row_threshold={reader_config['fallback_row_threshold']}",
+        flush=True,
+    )
+
+    if args.dry_run:
+        log_dry_run_details(
+            partitions=partitions,
+            runtime_window=runtime_window,
+            split_plan=split_plan,
+            row_counts=row_counts,
+            extraction_columns=extraction_columns,
+            full_pull_sql=sample_sql,
+        )
+        print("[PHASE1] dry_run_complete no_full_data_pull=true", flush=True)
+        return
+
+    print("[PHASE1] fetching schema and audit summaries", flush=True)
+    schema_frame = build_schema_frame(str(config["source_table"]))
+    audit_frames = fetch_live_audit_frames(str(config["source_table"]), runtime_window, reader_config=reader_config)
     print("[PHASE1] pulling mature ODPS training window", flush=True)
-    sample_frame = to_datetime_columns(fetch_frame(sample_sql, batch_size=250000))
+    reader_execution: Dict[str, Any] = {}
+    sample_frame = to_datetime_columns(
+        fetch_frame(
+            sample_sql,
+            batch_size=250000,
+            reader_config=reader_config,
+            expected_rows=int(sum(row_counts.values())),
+            execution_details=reader_execution,
+        )
+    )
     sample_frame["pt"] = sample_frame["pt"].astype(str)
     sample_frame = sample_frame.sort_values(["pt", "player_id", "assignment_date"]).reset_index(drop=True)
-    print(f"[PHASE1] sampled_rows={len(sample_frame)}", flush=True)
+    print(
+        f"[PHASE1] loaded_rows={len(sample_frame)} "
+        f"fallback_used={str(bool(reader_execution.get('fallback_used', False))).lower()}",
+        flush=True,
+    )
     missingness_frame = sampled_missingness(sample_frame)
 
-    split_frame, split_manifest = assign_time_splits(
-        sample_frame,
-        train_fraction=float(config["splits"]["train_fraction"]),
-        validation_fraction=float(config["splits"]["validation_fraction"]),
-    )
+    split_frame, split_manifest = assign_time_splits(sample_frame, split_plan)
     print(
         f"[PHASE1] split_pts train={len(split_manifest['train'])} validation={len(split_manifest['validation'])} test={len(split_manifest['test'])}",
+        flush=True,
+    )
+    loaded_row_counts = {name: int(len(frame)) for name, frame in split_frame.groupby("split", observed=False)}
+    print(
+        f"[PHASE1] loaded_split_rows train={loaded_row_counts.get('train', 0)} "
+        f"validation={loaded_row_counts.get('validation', 0)} "
+        f"test={loaded_row_counts.get('test', 0)}",
         flush=True,
     )
 
@@ -1291,7 +1557,19 @@ def main() -> None:
             "maturity_end_pt": runtime_window.maturity_end_pt,
             "modeling_end_pt": runtime_window.modeling_end_pt,
         },
+        "split_policy": split_policy,
+        "split_windows": {
+            "train": {"start_pt": split_plan.train.start_pt, "end_pt": split_plan.train.end_pt},
+            "validation": {"start_pt": split_plan.validation.start_pt, "end_pt": split_plan.validation.end_pt},
+            "test": {"start_pt": split_plan.test.start_pt, "end_pt": split_plan.test.end_pt},
+        },
+        "row_counts_before_pull": row_counts,
+        "row_counts_loaded": loaded_row_counts,
         "sample_rows": int(len(sample_frame)),
+        "odps_reader": {
+            **reader_config,
+            "fallback_used": bool(reader_execution.get("fallback_used", False)),
+        },
         "models": {
             name: {
                 "selected_threshold": float(result["selected_threshold"]),
