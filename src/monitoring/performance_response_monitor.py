@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Sequence
 
 import numpy as np
@@ -22,6 +22,24 @@ def mature_outcome_window_for_pt(pt: str, label_maturity_days: int, response_win
         "label_maturity_days": int(label_maturity_days),
         "response_window_days": int(response_window_days),
     }
+
+
+def labels_are_mature_for_pt(
+    pt: str,
+    *,
+    as_of_date: date,
+    label_maturity_days: int,
+    response_window_days: int,
+) -> Dict[str, Any]:
+    summary = mature_outcome_window_for_pt(
+        pt,
+        label_maturity_days=label_maturity_days,
+        response_window_days=response_window_days,
+    )
+    matured = as_of_date >= datetime.strptime(summary["matured_on_date"], "%Y-%m-%d").date()
+    summary["as_of_date"] = as_of_date.isoformat()
+    summary["labels_mature"] = bool(matured)
+    return summary
 
 
 def validate_observational_frame(frame: pd.DataFrame, *, response_window_days: int) -> None:
@@ -90,6 +108,36 @@ def build_global_performance_row(frame: pd.DataFrame, *, pt: str, response_windo
         }
     )
     return summary
+
+
+def build_not_evaluable_global_row(
+    *,
+    pt: str,
+    status_reason: str,
+) -> Dict[str, Any]:
+    return {
+        "monitor_run_ts": datetime.utcnow().replace(microsecond=0).isoformat(),
+        "metric_scope": "global",
+        "segment_column": None,
+        "segment_value": None,
+        "bucket_name": None,
+        "row_count": 0,
+        "positive_count": 0,
+        "observed_positive_rate": None,
+        "avg_predicted_score": None,
+        "predicted_positive_rate": None,
+        "calibration_gap": None,
+        "pr_auc": None,
+        "roc_auc": None,
+        "log_loss": None,
+        "brier_score": None,
+        "score_min": None,
+        "score_max": None,
+        "avg_observed_gross_bet_value": None,
+        "status": "not_evaluable",
+        "status_reason": status_reason,
+        "pt": str(pt),
+    }
 
 
 def build_bucket_performance_rows(frame: pd.DataFrame, *, pt: str, response_window_days: int, min_rows: int) -> List[Dict[str, Any]]:
@@ -356,6 +404,13 @@ def build_performance_markdown_report(
     calibration_rows: List[Dict[str, Any]],
     alerts: List[Dict[str, Any]],
 ) -> List[str]:
+    def _fmt(value: Any) -> str:
+        if value is None:
+            return "n/a"
+        if isinstance(value, float):
+            return f"{value:.6f}"
+        return str(value)
+
     lines = [
         "# Phase-1 Response Delayed Observational Monitoring",
         "",
@@ -363,11 +418,13 @@ def build_performance_markdown_report(
         f"- score date: `{maturity_summary['score_date']}`",
         f"- observed outcome end date: `{maturity_summary['observed_outcome_end_date']}`",
         f"- matured on date: `{maturity_summary['matured_on_date']}`",
+        f"- labels mature: `{maturity_summary.get('labels_mature')}`",
+        f"- status: `{global_row['status']}`",
         f"- global rows: `{global_row['row_count']}`",
-        f"- observed positive count / rate: `{global_row['positive_count']}` / `{global_row['observed_positive_rate']:.6f}`",
-        f"- average predicted score: `{global_row['avg_predicted_score']:.6f}`",
-        f"- calibration gap: `{global_row['calibration_gap']:.6f}`",
-        f"- PR AUC / ROC AUC: `{global_row['pr_auc']:.6f}` / `{global_row['roc_auc']:.6f}`",
+        f"- observed positive count / rate: `{global_row['positive_count']}` / `{_fmt(global_row['observed_positive_rate'])}`",
+        f"- average predicted score: `{_fmt(global_row['avg_predicted_score'])}`",
+        f"- calibration gap: `{_fmt(global_row['calibration_gap'])}`",
+        f"- PR AUC / ROC AUC: `{_fmt(global_row['pr_auc'])}` / `{_fmt(global_row['roc_auc'])}`",
         "",
         "## Bucket-Level Observational Performance",
         "",
@@ -375,9 +432,9 @@ def build_performance_markdown_report(
         "| --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in bucket_rows:
-        gap = "n/a" if row["calibration_gap"] is None else f"{row['calibration_gap']:.6f}"
+        gap = _fmt(row["calibration_gap"])
         lines.append(
-            f"| {row['bucket_name']} | {row['row_count']} | {row['observed_positive_rate']:.6f} | {row['avg_predicted_score']:.6f} | {gap} | {row['status']} |"
+            f"| {row['bucket_name']} | {row['row_count']} | {_fmt(row['observed_positive_rate'])} | {_fmt(row['avg_predicted_score'])} | {gap} | {row['status']} |"
         )
     lines.extend(
         [
@@ -390,7 +447,7 @@ def build_performance_markdown_report(
     )
     for row in segment_rows:
         lines.append(
-            f"| {row['segment_column']} | {row['segment_value']} | {row['row_count']} | {row['observed_positive_rate']:.6f} | {row['avg_predicted_score']:.6f} | {row['status']} |"
+            f"| {row['segment_column']} | {row['segment_value']} | {row['row_count']} | {_fmt(row['observed_positive_rate'])} | {_fmt(row['avg_predicted_score'])} | {row['status']} |"
         )
     lines.extend(
         [
@@ -403,7 +460,7 @@ def build_performance_markdown_report(
     )
     for row in calibration_rows:
         lines.append(
-            f"| {row['calibration_bin']} | {row['row_count']} | {row['average_predicted_score']:.6f} | {row['actual_positive_rate']:.6f} | {row['calibration_gap']:.6f} |"
+            f"| {row['calibration_bin']} | {row['row_count']} | {_fmt(row['average_predicted_score'])} | {_fmt(row['actual_positive_rate'])} | {_fmt(row['calibration_gap'])} |"
         )
     lines.extend(["", "## Alerts", ""])
     if not alerts:

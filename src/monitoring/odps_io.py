@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -38,6 +39,28 @@ def fetch_scalar(sql: str, column_name: str) -> Any:
     if frame.empty:
         return None
     return frame.iloc[0][column_name]
+
+
+def list_partition_values(table_name: str) -> List[str]:
+    project, table = normalize_odps_table_name(table_name)
+    client = create_odps_client_from_env()
+    odps_table = client.get_table(table, project=project)
+    values: List[str] = []
+    for partition in odps_table.partitions:
+        spec = str(partition.partition_spec)
+        start = spec.find("'")
+        end = spec.rfind("'")
+        if start == -1 or end == -1 or end <= start:
+            continue
+        values.append(spec[start + 1 : end])
+    return sorted(values)
+
+
+def fetch_table_column_names(table_name: str) -> List[str]:
+    project, table = normalize_odps_table_name(table_name)
+    client = create_odps_client_from_env()
+    odps_table = client.get_table(table, project=project)
+    return [column.name for column in odps_table.table_schema.simple_columns]
 
 
 def build_partition_exists_sql(table_name: str, partition_column: str, partition_value: str) -> str:
@@ -82,6 +105,9 @@ def fetch_observational_outcomes_for_scored_partition(
     outcome_partition_column: str,
     response_window_days: int,
 ) -> pd.DataFrame:
+    score_date = datetime.strptime(scoring_pt, "%Y%m%d").date()
+    min_outcome_pt = (score_date + timedelta(days=1)).strftime("%Y%m%d")
+    max_outcome_pt = (score_date + timedelta(days=response_window_days)).strftime("%Y%m%d")
     sql = f"""
 with scored as (
     select
@@ -97,6 +123,16 @@ with scored as (
     from {scored_table}
     where {scored_partition_column} = '{scoring_pt}'
 ),
+filtered_outcomes as (
+    select
+        login_name,
+        bet_amount,
+        stat_date,
+        {outcome_partition_column}
+    from {outcome_source_table}
+    where {outcome_partition_column} >= '{min_outcome_pt}'
+      and {outcome_partition_column} <= '{max_outcome_pt}'
+),
 outcomes as (
     select
         s.player_id,
@@ -106,12 +142,10 @@ outcomes as (
         min(cast(o.stat_date as date)) as first_observed_outcome_date,
         max(cast(o.stat_date as date)) as last_observed_outcome_date
     from scored s
-    left join {outcome_source_table} o
+    left join filtered_outcomes o
       on s.player_id = cast(o.login_name as string)
      and cast(o.stat_date as date) > s.score_date
      and cast(o.stat_date as date) <= dateadd(s.score_date, {response_window_days}, 'dd')
-     and o.{outcome_partition_column} >= regexp_replace(cast(dateadd(s.score_date, 1, 'dd') as string), '-', '')
-     and o.{outcome_partition_column} <= regexp_replace(cast(dateadd(s.score_date, {response_window_days}, 'dd') as string), '-', '')
     group by
         s.player_id,
         s.scoring_pt

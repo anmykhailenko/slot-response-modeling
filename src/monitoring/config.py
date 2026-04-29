@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+
+
 def load_yaml_file(path: Path) -> Dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -88,7 +91,7 @@ def load_response_monitoring_config(path: Path) -> ResponseMonitoringConfig:
     return ResponseMonitoringConfig(
         enabled=bool(monitoring.get("enabled", True)),
         source=SourceConfig(
-            scored_table=str(source.get("scored_table", "pai_rec_prod.alg_uplift_phase1_response_scores_di")),
+            scored_table=str(source.get("scored_table", "pai_rec_prod.alg_uplift_phase1_response_predictions_di")),
             scored_partition_column=str(source.get("scored_partition_column", "pt")),
             feature_table=None if source.get("feature_table") in {None, ""} else str(source.get("feature_table")),
             feature_partition_column=str(source.get("feature_partition_column", "pt")),
@@ -128,9 +131,16 @@ def load_response_monitoring_config(path: Path) -> ResponseMonitoringConfig:
             calibration_gap_alert=float(performance.get("calibration_gap_alert", 0.15)),
         ),
         outputs=OutputConfig(
-            reports_root=Path(str(outputs.get("reports_root", "reports/response_monitoring"))),
+            reports_root=_resolve_output_path(outputs.get("reports_root", "reports/response_monitoring")),
             odps_daily_table=str(outputs.get("odps_daily_table", "pai_rec_prod.ads_uplift_phase1_response_monitoring_daily_di")),
             odps_alerts_table=str(outputs.get("odps_alerts_table", "pai_rec_prod.ads_uplift_phase1_response_monitoring_alerts_di")),
             odps_performance_table=str(outputs.get("odps_performance_table", "pai_rec_prod.ads_uplift_phase1_response_monitoring_performance_di")),
         ),
     )
+
+
+def _resolve_output_path(value: Any) -> Path:
+    candidate = Path(str(value))
+    if candidate.is_absolute():
+        return candidate
+    return (ROOT_DIR / candidate).resolve()

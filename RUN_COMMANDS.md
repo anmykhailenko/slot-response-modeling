@@ -1,6 +1,6 @@
 # Response Run Commands
 
-Run from `response_modeling/`:
+Run from the project root:
 
 Training:
 
@@ -17,6 +17,6 @@ python3 src/modeling/run_phase1_response_scoring.py --config-path configs/respon
 Monitoring:
 
 ```bash
-python3 src/monitoring/run_response_monitoring.py --config configs/response_monitoring.yaml --mode daily --pt 20260420 --reference-pt 20260419
-python3 src/monitoring/run_response_monitoring.py --config configs/response_monitoring.yaml --mode performance --pt 20260420
+python3 src/monitoring/run_response_monitoring.py --config configs/response_monitoring.yaml --dry-run --assignment_start_date 20260420 --assignment_end_date 20260420
+python3 src/monitoring/run_response_monitoring.py --config configs/response_monitoring.yaml --assignment_start_date 20260420 --assignment_end_date 20260420
 ```

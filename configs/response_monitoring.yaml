@@ -4,7 +4,7 @@ response_monitoring:
   enabled: true
 
   source:
-    scored_table: pai_rec_prod.alg_uplift_phase1_response_scores_di
+    scored_table: pai_rec_prod.alg_uplift_phase1_response_predictions_di
     scored_partition_column: pt
     feature_table: pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
     feature_partition_column: pt
