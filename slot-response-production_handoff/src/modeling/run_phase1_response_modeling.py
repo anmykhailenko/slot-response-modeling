@@ -20,7 +20,9 @@ from sklearn.metrics import average_precision_score, brier_score_loss, f1_score,
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-WORKSPACE_ROOT = PROJECT_ROOT.parent
+MPL_CONFIG_DIR = (PROJECT_ROOT / ".mplconfig").resolve()
+MPL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(MPL_CONFIG_DIR))
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -109,7 +111,7 @@ def resolve_response_champion_reference_path(config: Dict[str, Any]) -> Path:
         if not candidate.is_absolute():
             candidate = (PROJECT_ROOT / candidate).resolve()
         return candidate
-    return (PROJECT_ROOT / "model_registry" / "response_current.json").resolve()
+    return (PROJECT_ROOT / "contracts" / "model_registry" / "response_current.json").resolve()
 
 
 def write_text(path: Path, content: str) -> None:
@@ -191,13 +193,20 @@ def list_partitions(table_name: str) -> List[str]:
     return list_odps_partition_values(table_name, partition_column="pt")
 
 
+def resolve_as_of_date(config: Dict[str, Any]) -> date:
+    raw_value = config.get("as_of_date")
+    if raw_value in {None, ""}:
+        return date.today()
+    return date.fromisoformat(str(raw_value))
+
+
 def resolve_runtime_window(config: Dict[str, Any], partitions: List[str]) -> RuntimeWindow:
     if not partitions:
         raise ValueError(
             "No `pt` partition values were discovered in the response dataset. "
             "The table may be empty, or ODPS metadata may not expose partitions for this table handle."
         )
-    as_of_date = date.fromisoformat(str(config["as_of_date"]))
+    as_of_date = resolve_as_of_date(config)
     response_window_days = int(config["response_window_days"])
     maturity_buffer_days = int(config.get("maturity_buffer_days", 0))
     maturity_end = as_of_date - timedelta(days=response_window_days + maturity_buffer_days)
@@ -804,7 +813,7 @@ def publish_champion_bundle(
         model_name=model_name,
         mlflow_run_id=run_id,
     )
-    bundle_dir = ensure_dir(WORKSPACE_ROOT / "outputs" / "runs" / f"{iteration_id}__{run_id}__{model_name}")
+    bundle_dir = ensure_dir(PROJECT_ROOT / "runtime" / "model_registry" / "bundles" / f"{iteration_id}__{run_id}__{model_name}")
     model_dir = ensure_dir(bundle_dir / "model")
     champion_reference_path = resolve_response_champion_reference_path(config)
     selected_threshold = float(best_result["selected_threshold"])
@@ -907,20 +916,11 @@ def build_reports(
     best_result: Dict[str, Any],
     artifacts_dir: Path,
 ) -> None:
-    reports_dir = PROJECT_ROOT / "reports"
+    reports_dir = PROJECT_ROOT / "runtime" / "reports"
     overall_full = audit_frames["overall_summary_full"].iloc[0].to_dict()
     overall_mature = audit_frames["overall_summary_mature"].iloc[0].to_dict()
     partition_summary = audit_frames["partition_summary_full"].copy()
     partition_summary["mature_for_modeling"] = partition_summary["pt"].astype(str) <= runtime_window.modeling_end_pt
-    response_window_days = int(config.get("response_window_days", 3))
-    maturity_buffer_days = int(config.get("maturity_buffer_days", 0))
-    as_of_date_value = config.get("as_of_date")
-    if as_of_date_value in {None, ""}:
-        as_of_date_label = (
-            pt_to_date(runtime_window.maturity_end_pt) + timedelta(days=response_window_days + maturity_buffer_days)
-        ).isoformat()
-    else:
-        as_of_date_label = str(as_of_date_value)
 
     candidate_targets = pd.DataFrame(
         [
@@ -986,7 +986,7 @@ This table is treated as an observational response dataset. It is not a causal u
 ## Live Table Coverage
 
 - Partition coverage discovered from ODPS metadata: `{runtime_window.min_pt}` to `{runtime_window.max_pt}` (`{len(partition_summary)}` daily partitions).
-- Conservative modeling cutoff for a 3-day response label on `as_of_date={as_of_date_label}`: `pt <= {runtime_window.modeling_end_pt}`.
+- Conservative modeling cutoff for a 3-day response label on `as_of_date={config['as_of_date']}`: `pt <= {runtime_window.modeling_end_pt}`.
 - Full table rows across all live partitions: `{format_int(overall_full['total_rows'])}`.
 - Mature modeling rows through `{runtime_window.modeling_end_pt}`: `{format_int(overall_mature['total_rows'])}`.
 - Distinct `(player_id, assignment_date)` keys across mature rows: `{format_int(overall_mature['distinct_player_day_rows'])}`.
@@ -1166,7 +1166,7 @@ The baselines below are observational response models trained on the full config
 
 ## Key Weaknesses
 
-- Precision and recall depend on a validation-chosen threshold and should be treated as operational placeholders, not final campaign policy.
+- Precision and recall depend on a validation-chosen threshold and should be treated as provisional operating metrics, not final campaign policy.
 - Performance still reflects observational exposure history, so selection bias remains.
 - `vip_level` missingness and strong day-to-day prevalence drift mean the model will need monitoring if promoted into regular targeting support.
 
@@ -1363,7 +1363,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
     parser = argparse.ArgumentParser(description="Run Phase-1 observational response modeling from the ODPS response table.")
     parser.add_argument(
+        "--config",
         "--config-path",
+        dest="config_path",
         default=str(PROJECT_ROOT / "configs" / "response_model.yaml"),
         help="Path to the Phase-1 response modeling config.",
     )

@@ -1,9 +1,9 @@
 set odps.sql.type.system.odps2=true;
 set odps.sql.hive.compatible=true;
 
--- Required runtime parameters:
---   ${assignment_start_date}   lower assignment partition bound in yyyymmdd form
---   ${assignment_end_date}     upper assignment partition bound in yyyymmdd form
+-- DataWorks partition parameter rules for this daily job:
+--   assignment-side pt filters must use expression parameters such as $[yyyymmdd-1]
+--   date/timestamp functions must keep string parameters such as '$[yyyymmdd-1]'
 --
 -- Real ODPS dependencies:
 --   base population: pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
@@ -40,7 +40,7 @@ with base_population as (
         cast(vip_level as string) as vip_level,
         cast(pt as string) as pt
     from pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
       and is_eligible = 1
       and label_maturity_d3 = 1
 ),
@@ -51,7 +51,7 @@ voucher_treatment as (
         min(cast(coalesce(release_datetime, clamined_datetime) as timestamp)) as first_treatment_timestamp,
         count(*) as voucher_event_count
     from SuperEngineProject.dwd_mms_user_claimed_info_di
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
       and coalesce(release_datetime, clamined_datetime) is not null
     group by
         cast(login_name as string),
@@ -64,7 +64,7 @@ sms_treatment as (
         min(cast(coalesce(send_time, create_time) as timestamp)) as first_treatment_timestamp,
         count(*) as sms_event_count
     from superengineproject.ods_msg_sms_send_record
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
       and coalesce(send_time, create_time) is not null
       and cast(state as string) = '3'
     group by
@@ -103,28 +103,8 @@ outcome_daily as (
         sum(cast(gross_gaming_revenue as double)) as gross_ggr_1d,
         count(*) as source_row_count_1d
     from SuperEngineProject.ads_bet_site_order_sum_di
-    where pt >= regexp_replace(
-            cast(
-                dateadd(
-                    cast(concat(substr('${assignment_start_date}', 1, 4), '-', substr('${assignment_start_date}', 5, 2), '-', substr('${assignment_start_date}', 7, 2)) as date),
-                    1,
-                    'dd'
-                ) as string
-            ),
-            '-',
-            ''
-        )
-      and pt <= regexp_replace(
-            cast(
-                dateadd(
-                    cast(concat(substr('${assignment_end_date}', 1, 4), '-', substr('${assignment_end_date}', 5, 2), '-', substr('${assignment_end_date}', 7, 2)) as date),
-                    3,
-                    'dd'
-                ) as string
-            ),
-            '-',
-            ''
-        )
+    where pt >= $[yyyymmdd]
+      and pt <= $[yyyymmdd+2]
     group by
         cast(login_name as string),
         cast(stat_date as date),

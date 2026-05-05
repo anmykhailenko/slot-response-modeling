@@ -1,0 +1,52 @@
+version: 1
+
+response_monitoring:
+  enabled: true
+
+  source:
+    scored_table: pai_rec_prod.alg_uplift_phase1_response_scores_di
+    scored_partition_column: pt
+    feature_table: pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
+    feature_partition_column: pt
+    eligibility_filter_sql: is_eligible = 1
+    outcome_source_table: SuperEngineProject.ads_bet_site_order_sum_di
+    outcome_partition_column: pt
+
+  segments:
+    score_segment_columns:
+      - vip_level
+    daily_segment_columns:
+      - vip_level
+
+  daily_thresholds:
+    min_row_count: 1
+    row_count_drop_warn_ratio: 0.10
+    row_count_drop_alert_ratio: 0.25
+    row_count_growth_warn_ratio: 0.15
+    row_count_growth_alert_ratio: 0.35
+    duplicate_player_alert_count: 1
+    invalid_score_alert_count: 1
+    max_missing_metadata_rows: 0
+    max_snapshot_date_lag_days: 3
+    max_snapshot_date_distinct_count: 2
+    min_top_bucket_share: 0.01
+    max_top_bucket_share: 0.70
+    max_vip_missing_rate: 0.05
+
+  performance_thresholds:
+    label_maturity_days: 4
+    response_window_days: 3
+    min_rows: 1000
+    min_positive: 25
+    min_bucket_rows: 100
+    min_segment_rows: 100
+    response_rate_floor_warn: 0.01
+    response_rate_floor_alert: 0.005
+    calibration_gap_warn: 0.08
+    calibration_gap_alert: 0.15
+
+  outputs:
+    reports_root: runtime/reports/response_monitoring
+    odps_daily_table: pai_rec_prod.ads_uplift_phase1_response_monitoring_daily_di
+    odps_alerts_table: pai_rec_prod.ads_uplift_phase1_response_monitoring_alerts_di
+    odps_performance_table: pai_rec_prod.ads_uplift_phase1_response_monitoring_performance_di

@@ -28,10 +28,11 @@ are recomputed from `SuperEngineProject.ads_bet_site_order_sum_di` using the con
 - many rows should be positive in the 3-day post-assignment window
 - the current builder behavior is therefore wrong in the post-assignment outcome join / label construction path
 
-## Runtime Parameters
+## DataWorks Parameters
 
-- `${assignment_start_date}`: lower assignment partition bound in `yyyymmdd`
-- `${assignment_end_date}`: upper assignment partition bound in `yyyymmdd`
+- assignment-side partition filters use `$[yyyymmdd-1]`
+- 3-day post-assignment outcome partition pruning uses `o.pt >= $[yyyymmdd]` and `o.pt <= $[yyyymmdd+2]`
+- keep string form only inside date/timestamp expressions, for example `to_date('$[yyyymmdd-1]')`
 
 ## Safe Execution Pattern
 

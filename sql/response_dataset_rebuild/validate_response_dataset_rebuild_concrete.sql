@@ -1,9 +1,9 @@
 set odps.sql.type.system.odps2=true;
 set odps.sql.hive.compatible=true;
 
--- Required runtime parameters:
---   ${assignment_start_date}
---   ${assignment_end_date}
+-- DataWorks partition parameter rules for this daily validation:
+--   assignment-side pt filters must use expression parameters such as $[yyyymmdd-1]
+--   date/timestamp functions must keep string parameters such as '$[yyyymmdd-1]'
 
 with base_population as (
     select
@@ -11,7 +11,7 @@ with base_population as (
         cast(concat(substr(pt, 1, 4), '-', substr(pt, 5, 2), '-', substr(pt, 7, 2)) as date) as assignment_date,
         cast(pt as string) as pt
     from pai_rec_prod.ads_bp_user_slot_churn_features_v2_di
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
       and is_eligible = 1
       and label_maturity_d3 = 1
 ),
@@ -20,7 +20,7 @@ voucher_treatment as (
         cast(login_name as string) as player_id,
         cast(coalesce(release_datetime, clamined_datetime) as date) as assignment_date
     from SuperEngineProject.dwd_mms_user_claimed_info_di
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
       and coalesce(release_datetime, clamined_datetime) is not null
     group by
         cast(login_name as string),
@@ -31,7 +31,7 @@ sms_treatment as (
         cast(login_name as string) as player_id,
         cast(coalesce(send_time, create_time) as date) as assignment_date
     from superengineproject.ods_msg_sms_send_record
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
       and coalesce(send_time, create_time) is not null
       and cast(state as string) = '3'
     group by
@@ -51,8 +51,8 @@ expected_outcome as (
       on cast(o.login_name as string) = b.player_id
      and cast(o.stat_date as date) > b.assignment_date
      and cast(o.stat_date as date) <= dateadd(b.assignment_date, 3, 'dd')
-     and o.pt >= regexp_replace(cast(dateadd(b.assignment_date, 1, 'dd') as string), '-', '')
-     and o.pt <= regexp_replace(cast(dateadd(b.assignment_date, 3, 'dd') as string), '-', '')
+     and o.pt >= $[yyyymmdd]
+     and o.pt <= $[yyyymmdd+2]
     group by
         b.pt,
         b.player_id,
@@ -68,7 +68,7 @@ actual as (
         cast(outcome_gross_bet_3d_value as double) as outcome_gross_bet_3d_value,
         cast(response_label_positive_3d as bigint) as response_label_positive_3d
     from pai_rec_prod.alg_uplift_phase1_response_dataset_di
-    where pt between '${assignment_start_date}' and '${assignment_end_date}'
+    where pt = $[yyyymmdd-1]
 )
 select
     a.pt,
