@@ -921,6 +921,15 @@ def build_reports(
     overall_mature = audit_frames["overall_summary_mature"].iloc[0].to_dict()
     partition_summary = audit_frames["partition_summary_full"].copy()
     partition_summary["mature_for_modeling"] = partition_summary["pt"].astype(str) <= runtime_window.modeling_end_pt
+    response_window_days = int(config.get("response_window_days", 3))
+    maturity_buffer_days = int(config.get("maturity_buffer_days", 0))
+    as_of_date_value = config.get("as_of_date")
+    if as_of_date_value in {None, ""}:
+        as_of_date_label = (
+            pt_to_date(runtime_window.maturity_end_pt) + timedelta(days=response_window_days + maturity_buffer_days)
+        ).isoformat()
+    else:
+        as_of_date_label = str(as_of_date_value)
 
     candidate_targets = pd.DataFrame(
         [
@@ -986,7 +995,7 @@ This table is treated as an observational response dataset. It is not a causal u
 ## Live Table Coverage
 
 - Partition coverage discovered from ODPS metadata: `{runtime_window.min_pt}` to `{runtime_window.max_pt}` (`{len(partition_summary)}` daily partitions).
-- Conservative modeling cutoff for a 3-day response label on `as_of_date={config['as_of_date']}`: `pt <= {runtime_window.modeling_end_pt}`.
+- Conservative modeling cutoff for a 3-day response label on `as_of_date={as_of_date_label}`: `pt <= {runtime_window.modeling_end_pt}`.
 - Full table rows across all live partitions: `{format_int(overall_full['total_rows'])}`.
 - Mature modeling rows through `{runtime_window.modeling_end_pt}`: `{format_int(overall_mature['total_rows'])}`.
 - Distinct `(player_id, assignment_date)` keys across mature rows: `{format_int(overall_mature['distinct_player_day_rows'])}`.

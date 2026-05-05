@@ -1,0 +1,11 @@
+{
+  "export_bundle_path": "/Users/anastasiia.m/Documents/My projects/slot-response-modeling-clean/slot-response-production_handoff/runtime/model_registry/bundles/response_model__phase1_response_20260505T015548Z__lightgbm",
+  "iteration_id": "response_model",
+  "model_name": "lightgbm",
+  "model_version": "response_model__lightgbm__phase1_r",
+  "run_id": "phase1_response_20260505T015548Z",
+  "selected_score_variant": "response_probability",
+  "selected_threshold": 0.5,
+  "source_table": "pai_rec_prod.alg_uplift_phase1_response_dataset_di",
+  "target_column": "response_label_positive_3d"
+}

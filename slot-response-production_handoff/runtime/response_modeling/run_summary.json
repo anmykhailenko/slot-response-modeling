@@ -1,0 +1,74 @@
+{
+  "runtime_window": {
+    "min_pt": "20260201",
+    "max_pt": "20260503",
+    "maturity_end_pt": "20260501",
+    "modeling_end_pt": "20260501"
+  },
+  "split_policy": {
+    "train_days": 30,
+    "validation_days": 7,
+    "test_days": 14,
+    "require_contiguous_partitions": true
+  },
+  "split_windows": {
+    "train": {
+      "start_pt": "20260312",
+      "end_pt": "20260410"
+    },
+    "validation": {
+      "start_pt": "20260411",
+      "end_pt": "20260417"
+    },
+    "test": {
+      "start_pt": "20260418",
+      "end_pt": "20260501"
+    }
+  },
+  "row_counts_before_pull": {
+    "train": 2468327,
+    "validation": 613353,
+    "test": 1424833
+  },
+  "row_counts_loaded": {
+    "test": 1424833,
+    "train": 2468327,
+    "validation": 613353
+  },
+  "sample_rows": 4506513,
+  "odps_reader": {
+    "use_arrow": false,
+    "arrow_diagnostic_enabled": false,
+    "fallback_row_threshold": 5000000,
+    "fallback_used": false
+  },
+  "models": {
+    "logistic_regression": {
+      "selected_threshold": 0.45,
+      "threshold_policy": "max_precision_with_min_recall(minimum_recall=0.60)",
+      "validation_pr_auc": 0.7222840209850088,
+      "test_pr_auc": 0.716282447210113,
+      "test_roc_auc": 0.703228870158159
+    },
+    "lightgbm": {
+      "selected_threshold": 0.5,
+      "threshold_policy": "max_precision_with_min_recall(minimum_recall=0.60)",
+      "validation_pr_auc": 0.7444431638183772,
+      "test_pr_auc": 0.7360110082778407,
+      "test_roc_auc": 0.7222955031790317
+    }
+  },
+  "best_model": "lightgbm",
+  "champion": {
+    "bundle_dir": "/Users/anastasiia.m/Documents/My projects/slot-response-modeling-clean/slot-response-production_handoff/runtime/model_registry/bundles/response_model__phase1_response_20260505T015548Z__lightgbm",
+    "model_dir": "/Users/anastasiia.m/Documents/My projects/slot-response-modeling-clean/slot-response-production_handoff/runtime/model_registry/bundles/response_model__phase1_response_20260505T015548Z__lightgbm/model",
+    "model_version": "response_model__lightgbm__phase1_r",
+    "run_id": "phase1_response_20260505T015548Z",
+    "champion_reference_path": "/Users/anastasiia.m/Documents/My projects/slot-response-modeling-clean/slot-response-production_handoff/contracts/model_registry/response_current.json"
+  },
+  "lightgbm_reporting": {
+    "model_dir": "/Users/anastasiia.m/Documents/My projects/slot-response-modeling-clean/slot-response-production_handoff/runtime/response_modeling/models/lightgbm",
+    "reports_dir": "/Users/anastasiia.m/Documents/My projects/slot-response-modeling-clean/slot-response-production_handoff/reports",
+    "selected_threshold": 0.5
+  }
+}

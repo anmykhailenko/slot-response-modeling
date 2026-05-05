@@ -1,0 +1,38 @@
+column_name,data_type,comment,is_partition
+player_id,STRING,login_name-style player identifier,False
+assignment_date,DATE,treatment assignment date,False
+treatment_timestamp,TIMESTAMP,earliest observed treatment timestamp on assignment_date,False
+treatment_flag,BIGINT,binary treatment indicator; always 1 for this observational treated dataset,False
+raw_assignment_event_count,BIGINT,count of raw treatment events collapsed into the user-day row,False
+has_voucher_treatment,BIGINT,1 if voucher source contributed to the user-day row,False
+has_sms_treatment,BIGINT,1 if sms source contributed to the user-day row,False
+feature_snapshot_date,DATE,selected pre-treatment feature snapshot date,False
+recent_bet_cnt_7d,BIGINT,feature mart column,False
+recent_bet_amt_7d,DOUBLE,feature mart column,False
+recent_win_amt_7d,DOUBLE,feature mart column,False
+recent_ggr_amt_7d,DOUBLE,feature mart column,False
+recent_net_loss_amt_7d,DOUBLE,feature mart column,False
+recent_bet_days_7d,BIGINT,feature mart column,False
+recency_last_bet_to_t,BIGINT,feature mart column,False
+pre_bet_cnt_30d,BIGINT,feature mart column,False
+pre_bet_amt_30d,DOUBLE,feature mart column,False
+pre_win_amt_30d,DOUBLE,feature mart column,False
+pre_ggr_amt_30d,DOUBLE,feature mart column,False
+pre_net_loss_amt_30d,DOUBLE,feature mart column,False
+pre_bet_days_30d,BIGINT,feature mart column,False
+recent_dep_cnt_7d,BIGINT,feature mart column,False
+recent_dep_amt_7d,DOUBLE,feature mart column,False
+recent_withdraw_cnt_7d,BIGINT,feature mart column,False
+recent_withdraw_amt_7d,DOUBLE,feature mart column,False
+recent_net_cash_in_7d,DOUBLE,feature mart column,False
+feature_create_time,TIMESTAMP,raw feature mart audit column,False
+data_version,STRING,raw feature mart audit column,False
+vip_level,STRING,raw feature mart audit column,False
+outcome_gross_bet_3d_value,DOUBLE,summed post-treatment 3-day bet amount from the isolated outcome source,False
+outcome_gross_ggr_3d_value,DOUBLE,summed post-treatment 3-day gross gaming revenue from the isolated outcome source,False
+outcome_source_row_count_3d,BIGINT,count of source rows contributing to the 3-day outcome rollup,False
+outcome_distinct_source_keys_3d,BIGINT,count of distinct outcome source keys contributing to the 3-day rollup,False
+first_outcome_event_date,DATE,earliest post-treatment outcome date observed in the 3-day window,False
+last_outcome_event_date,DATE,latest post-treatment outcome date observed in the 3-day window,False
+response_label_positive_3d,BIGINT,1 if outcome_gross_bet_3d_value > 0 else 0,False
+pt,STRING,assignment_date partition in yyyymmdd form,True

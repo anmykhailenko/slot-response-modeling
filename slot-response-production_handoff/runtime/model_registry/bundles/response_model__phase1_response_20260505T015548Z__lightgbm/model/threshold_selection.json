@@ -1,0 +1,5 @@
+{
+  "selected_score_variant": "response_probability",
+  "selected_threshold": 0.5,
+  "threshold_policy": "max_precision_with_min_recall(minimum_recall=0.60)"
+}
